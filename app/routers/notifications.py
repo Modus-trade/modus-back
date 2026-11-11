@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta, timezone
 import jwt
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import select, func, update
@@ -58,10 +59,23 @@ def read_ticket(ticket_id: int, db: DB, user: CurrentUser):
     return {"ok": True}
 
 
-def _user_from_cookie(db, token: str | None) -> int | None:
+@live.get("/ws-token")
+def ws_token(user: CurrentUser):
+    """Короткий токен для WebSocket из мобильного приложения (cookie сессии туда не передать)."""
+    token = jwt.encode(
+        {"sub": str(user.id), "scope": "ws", "exp": datetime.now(timezone.utc) + timedelta(seconds=60)},
+        SECRET,
+        algorithm="HS256",
+    )
+    return {"token": token}
+
+
+def _user_from_cookie(db, token: str | None, scope: str | None = None) -> int | None:
     try:
         payload = jwt.decode(token or "", SECRET, algorithms=["HS256"])
         uid = int(payload["sub"])
+        if scope and payload.get("scope") != scope:
+            return None
     except (jwt.PyJWTError, ValueError, KeyError):
         return None
     user = db.get(User, uid)
@@ -71,12 +85,18 @@ def _user_from_cookie(db, token: str | None) -> int | None:
 @live.websocket("/ws")
 async def websocket(ws: WebSocket, db: DB):
     """Живые события: новые уведомления и изменения обращений без перезагрузки."""
-    origin = ws.headers.get("origin")
-    allowed = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
-    if origin and origin not in allowed:
-        await ws.close(code=4403)
-        return
-    user_id = _user_from_cookie(db, ws.cookies.get("session"))
+    token = ws.query_params.get("token")
+    if token:
+        # Мобильное приложение: вход по короткому токену. Чужой сайт его получить не может,
+        # поэтому проверка Origin здесь не нужна.
+        user_id = _user_from_cookie(db, token, scope="ws")
+    else:
+        origin = ws.headers.get("origin")
+        allowed = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+        if origin and origin not in allowed:
+            await ws.close(code=4403)
+            return
+        user_id = _user_from_cookie(db, ws.cookies.get("session"))
     db.close()  # соединение с базой на всё время сокета не держим
     if not user_id:
         await ws.close(code=4401)

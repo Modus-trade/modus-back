@@ -524,3 +524,23 @@ def test_websocket_requires_session(clients):
     with pytest.raises(WebSocketDisconnect):
         with TestClient(app).websocket_connect("/api/ws") as ws:
             ws.receive_text()
+
+
+def test_websocket_with_mobile_token(clients):
+    from fastapi.testclient import TestClient
+    employee, _, manager, _, _ = clients
+    token = manager.get("/api/ws-token").json()["token"]
+    with TestClient(app).websocket_connect(f"/api/ws?token={token}") as ws:
+        employee.post(
+            "/api/tickets",
+            json={"type": "PROBLEM", "category_id": 1, "title": "Мобильный сокет", "description": "Проверка токена"},
+        )
+        types = {ws.receive_json()["type"], ws.receive_json()["type"]}
+        assert types == {"notification", "ticket_changed"}
+    # Обычный JWT сессии не подходит как токен сокета.
+    import pytest
+    from starlette.websockets import WebSocketDisconnect
+    session = manager.cookies.get("session")
+    with pytest.raises(WebSocketDisconnect):
+        with TestClient(app).websocket_connect(f"/api/ws?token={session}") as ws:
+            ws.receive_text()

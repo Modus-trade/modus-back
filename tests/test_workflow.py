@@ -412,3 +412,78 @@ def test_unicode_passwords_and_legacy_upgrade(clients):
         db.get(User, 1).password_hash = passwords.handler("bcrypt").hash(original)
         db.commit()
     assert employee.post("/api/auth/login", json={"email": "u1@modus.demo", "password": other}).status_code == 401
+
+
+def test_attention_overlaps_filters_pagination_and_activity(clients):
+    from datetime import timedelta
+    from app.models import Attachment, Comment, Ticket, TicketHistory, now
+    employee, _, _, _, admin = clients
+    ids = [create(employee, 2 if i in (0, 3) else 1)['id'] for i in range(8)]
+    stamp = now()
+    generator = app.dependency_overrides[get_db]()
+    db = next(generator)
+    try:
+        for i, ticket_id in enumerate(ids):
+            t = db.get(Ticket, ticket_id)
+            t.created_at = stamp - timedelta(days=25)
+            t.updated_at = stamp - timedelta(days=20 if i == 0 else 9) if i in (0, 2, 4, 5, 6, 7) else stamp
+            t.due_at = stamp - timedelta(days=1) if i in (0, 1, 4) else stamp + timedelta(days=1)
+            t.first_response_at = stamp - timedelta(days=15) if i in (2, 5, 6, 7) else None
+            t.priority = 'HIGH' if i == 1 else 'LOW'
+            if i == 4:
+                t.status = 'IMPLEMENTED'
+            if i == 5:
+                db.add(Comment(ticket_id=ticket_id, author_id=1, body='Недавний ответ', created_at=stamp))
+            if i == 6:
+                db.add(TicketHistory(ticket_id=ticket_id, actor_id=3, field='priority', old_value='HIGH', new_value='LOW', created_at=stamp))
+            if i == 7:
+                db.add(Attachment(ticket_id=ticket_id, uploaded_by_id=1, filename='notes.txt', stored_path='/unused', content_type='text/plain', size_bytes=4, created_at=stamp))
+        db.commit()
+    finally:
+        generator.close()
+    response = admin.get('/api/analytics/attention')
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data['counts'] == {'total': 4, 'unassigned': 2, 'overdue': 2, 'stale': 2}
+    assert data['total'] == len({t['id'] for t in data['items']}) == 4
+    assert data['items'][0]['id'] == ids[0]
+    assert data['items'][0]['attention_reasons'] == ['unassigned', 'overdue', 'stale']
+    assert data['notifications']['enabled'] is False
+    assert admin.get('/api/analytics/attention?reason=stale&stale_days=14').json()['total'] == 1
+    assert admin.get('/api/analytics/attention?reason=unassigned').json()['total'] == 2
+    assert admin.get('/api/analytics/attention?priority=HIGH').json()['total'] == 1
+    searched = admin.get('/api/analytics/attention', params={'q':data['items'][0]['number']}).json()
+    assert searched['total'] == 1 and searched['counts']['total'] == 4
+    first = admin.get('/api/analytics/attention?page_size=1').json()
+    second = admin.get('/api/analytics/attention?page_size=1&page=2').json()
+    assert first['total'] == second['total'] == 4
+    assert first['items'][0]['id'] != second['items'][0]['id']
+    assert admin.get('/api/analytics/attention?stale_days=0').status_code == 422
+    assert admin.get('/api/analytics/attention?reason=invalid').status_code == 422
+
+
+def test_attention_access_empty_and_legacy_assignee(clients):
+    from app.models import Ticket
+    employee, _, manager, _, admin = clients
+    assert employee.get('/api/analytics/attention').status_code == 403
+    assert manager.get('/api/analytics/attention').status_code == 403
+    assert admin.get('/api/analytics/attention').json()['counts']['total'] == 0
+    item = create(employee)
+    generator = app.dependency_overrides[get_db]()
+    db = next(generator)
+    try:
+        db.get(User, 3).is_active = False
+        db.commit()
+    finally:
+        generator.close()
+    data = admin.get('/api/analytics/attention').json()
+    assert data['counts']['unassigned'] == 1
+    assert data['items'][0]['id'] == item['id']
+    generator = app.dependency_overrides[get_db]()
+    db = next(generator)
+    try:
+        db.get(Ticket, item['id']).status = 'CLOSED'
+        db.commit()
+    finally:
+        generator.close()
+    assert admin.get('/api/analytics/attention').json()['total'] == 0

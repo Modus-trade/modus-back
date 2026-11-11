@@ -74,8 +74,8 @@ class TicketHistory(Base):
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
     actor_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     field: Mapped[str] = mapped_column(String(60))
-    old_value: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    new_value: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 

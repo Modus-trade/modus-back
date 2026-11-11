@@ -14,9 +14,17 @@ def login(data: Login, response: Response, db: DB):
     if (
         not user
         or not user.is_active
-        or not passwords.verify(data.password, user.password_hash)
     ):
         raise HTTPException(401, "Неверная почта или пароль")
+    # Legacy bcrypt truncates at 72 bytes. Never accept ambiguous long inputs.
+    if passwords.identify(user.password_hash) == "bcrypt" and len(data.password.encode("utf-8")) > 72:
+        raise HTTPException(401, "Обновите пароль через администратора")
+    valid, replacement = passwords.verify_and_update(data.password, user.password_hash)
+    if not valid:
+        raise HTTPException(401, "Неверная почта или пароль")
+    if replacement:
+        user.password_hash = replacement
+        db.commit()
     response.set_cookie(
         "session",
         token(user),

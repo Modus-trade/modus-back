@@ -145,7 +145,7 @@ def test_full_clarification_and_resolution_workflow(clients):
     assert detail["resolution"] == "Семинар запланирован"
     assert detail["closed_at"]
     assert len(detail["comments"]) == 2
-    assert {h["field"] for h in detail["history"]} == {"status", "priority"}
+    assert {h["field"] for h in detail["history"]} == {"status", "priority", "resolution"}
     assert manager.patch(path, json={"status": "NEW"}).status_code == 422
     assert (
         manager.post(
@@ -315,3 +315,100 @@ def test_admin_validation_and_inactive_routing(clients):
         == 422
     )
     assert "password_hash" not in admin.get("/api/users").text
+
+
+def test_cleared_filters_restore_results(clients):
+    employee, _, _, _, admin = clients
+    create(employee)
+    for field in ("category_id", "assignee_id", "author_id", "overdue", "status", "type", "priority"):
+        response = admin.get("/api/tickets", params={field: ""})
+        assert response.status_code == 200, (field, response.text)
+        assert response.json()["total"] == 1, field
+    for field in ("category_id", "assignee_id", "overdue"):
+        assert admin.get("/api/tickets", params={field: "invalid"}).status_code == 422
+    assert admin.get("/api/tickets", params={"category_id": 2}).json()["total"] == 0
+    assert admin.get("/api/tickets", params={"overdue": "false"}).json()["total"] == 1
+
+
+def test_priority_sort_has_business_order(clients):
+    employee, _, _, _, admin = clients
+    for priority in ("MEDIUM", "HIGH", "LOW"):
+        ticket = create(employee)
+        assert admin.patch(f"/api/tickets/{ticket['id']}", json={"priority": priority}).status_code == 200
+    for order, expected in (("asc", ["LOW", "MEDIUM", "HIGH"]), ("desc", ["HIGH", "MEDIUM", "LOW"])):
+        rows = admin.get("/api/tickets", params={"sort": "priority", "order": order}).json()["items"]
+        assert [row["priority"] for row in rows] == expected
+
+
+@pytest.mark.parametrize("change_user", [{"is_active": False}, {"role": "EMPLOYEE"}])
+def test_unavailable_assignee_releases_work_and_routing(clients, change_user):
+    employee, _, _, _, admin = clients
+    open_ticket = create(employee)
+    closed_ticket = create(employee)
+    path = f"/api/tickets/{closed_ticket['id']}"
+    admin.patch(path, json={"status": "REJECTED", "resolution": "Нет ресурсов"})
+    admin.patch(path, json={"status": "CLOSED"})
+    assert admin.patch("/api/users/3", json=change_user).status_code == 200
+    detail = admin.get(f"/api/tickets/{open_ticket['id']}").json()
+    assert detail["assignee_id"] is None
+    event = detail["history"][-1]
+    assert (event["field"], event["old_value"], event["new_value"], event["actor_id"]) == ("assignee_id", "3", None, 5)
+    assert admin.get(path).json()["assignee_id"] == 3
+    assert admin.get("/api/tickets?unassigned=true").json()["total"] == 1
+    assert next(c for c in admin.get("/api/categories").json() if c["id"] == 1)["default_assignee_id"] is None
+    assert create(employee)["assignee_id"] is None
+    assert admin.patch(f"/api/tickets/{open_ticket['id']}", json={"assignee_id": 4}).status_code == 200
+
+
+def test_legacy_unavailable_assignment_is_visible_in_queue(clients):
+    employee, _, _, _, admin = clients
+    ticket = create(employee)
+    with next(app.dependency_overrides[get_db]()) as db:
+        db.get(User, 3).is_active = False
+        db.commit()
+    rows = admin.get("/api/tickets?unassigned=true").json()["items"]
+    assert [r["id"] for r in rows] == [ticket["id"]]
+
+
+def test_resolution_revisions_are_complete_and_atomic(clients):
+    employee, _, manager, _, admin = clients
+    ticket = create(employee)
+    path = f"/api/tickets/{ticket['id']}"
+    original = "Первый результат. " * 100
+    replacement = "Уточнённый результат. " * 100
+    assert manager.patch(path, json={"status": "REJECTED", "resolution": original}).status_code == 200
+    assert manager.patch(path, json={"resolution": replacement}).status_code == 200
+    assert manager.patch(path, json={"resolution": replacement}).status_code == 200
+    assert manager.patch(path, json={"resolution": " "}).status_code == 422
+    detail = employee.get(path).json()
+    history = [h for h in detail["history"] if h["field"] == "resolution"]
+    assert len(history) == 2
+    assert (history[0]["old_value"], history[0]["new_value"]) == (None, original)
+    assert (history[1]["old_value"], history[1]["new_value"]) == (original, replacement)
+    assert history[1]["actor_id"] == 3
+    assert detail["resolution"] == replacement
+    assert admin.patch(path, json={"status": "CLOSED"}).status_code == 200
+    assert admin.patch(path, json={"resolution": "Переписано"}).status_code == 422
+
+
+def test_unicode_passwords_and_legacy_upgrade(clients):
+    employee, _, _, _, admin = clients
+    original = "я" * 40 + "a"
+    other = "я" * 40 + "b"
+    response = admin.post("/api/users", json={"email": "unicode@modus.demo", "password": original, "full_name": "Тест", "department": "Тест"})
+    assert response.status_code == 201
+    with TestClient(app) as client:
+        assert client.post("/api/auth/login", json={"email": "unicode@modus.demo", "password": other}).status_code == 401
+        assert client.post("/api/auth/login", json={"email": "unicode@modus.demo", "password": original}).status_code == 200
+        assert admin.patch(f"/api/users/{response.json()['id']}", json={"password": other}).status_code == 200
+        assert client.post("/api/auth/login", json={"email": "unicode@modus.demo", "password": original}).status_code == 401
+        assert client.post("/api/auth/login", json={"email": "unicode@modus.demo", "password": other}).status_code == 200
+    with next(app.dependency_overrides[get_db]()) as db:
+        db.get(User, 1).password_hash = passwords.handler("bcrypt").hash("demo1234")
+        db.commit()
+    assert employee.post("/api/auth/login", json={"email": "u1@modus.demo", "password": "demo1234"}).status_code == 200
+    with next(app.dependency_overrides[get_db]()) as db:
+        assert passwords.identify(db.get(User, 1).password_hash) == "bcrypt_sha256"
+        db.get(User, 1).password_hash = passwords.handler("bcrypt").hash(original)
+        db.commit()
+    assert employee.post("/api/auth/login", json={"email": "u1@modus.demo", "password": other}).status_code == 401

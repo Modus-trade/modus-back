@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from .database import get_db
 from .models import User, now
 
-passwords = CryptContext(schemes=["bcrypt"], deprecated="auto")
+passwords = CryptContext(schemes=["bcrypt_sha256", "bcrypt"], deprecated="auto")
 SECRET = os.getenv("JWT_SECRET") or secrets.token_hex(32)
 DB = Annotated[Session, Depends(get_db)]
 

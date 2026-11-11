@@ -1,9 +1,9 @@
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
-from ..models import Category, User
+from ..models import Category, Ticket, User
 from ..schemas import CategoryCreate, CategoryPatch, UserCreate, UserPatch, UserPublic
 from ..security import Admin, CurrentUser, DB, passwords
-from ..services.tickets import validate_assignee
+from ..services.tickets import change, validate_assignee
 
 router = APIRouter(prefix="/api", tags=["administration"])
 
@@ -98,5 +98,14 @@ def patch_user(user_id: int, data: UserPatch, db: DB, user: Admin):
         item.password_hash = passwords.hash(values.pop("password"))
     for key, value in values.items():
         setattr(item, key, value)
+    if not item.is_active or item.role == "EMPLOYEE":
+        for ticket in db.scalars(select(Ticket).where(
+            Ticket.assignee_id == item.id, Ticket.status != "CLOSED"
+        )):
+            change(db, ticket, user, "assignee_id", None)
+        for category in db.scalars(select(Category).where(
+            Category.default_assignee_id == item.id
+        )):
+            category.default_assignee_id = None
     db.commit()
     return item

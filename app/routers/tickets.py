@@ -1,10 +1,12 @@
 from datetime import timedelta
 from pathlib import Path
 import uuid
+from typing import Annotated
+from pydantic import BeforeValidator
 from fastapi import APIRouter, HTTPException, Query, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import case, func, or_, select, text
 from ..database import BASE_DIR
 from ..models import Attachment, Category, Comment, Ticket, TicketHistory, User, now
 from ..schemas import CommentCreate, TicketCreate, TicketPatch
@@ -20,6 +22,14 @@ from ..services.tickets import (
 
 router = APIRouter(prefix="/api", tags=["tickets"])
 UPLOADS = BASE_DIR / "uploads"
+
+
+def empty_to_none(value):
+    return None if value == "" else value
+
+
+OptionalIntFilter = Annotated[int | None, BeforeValidator(empty_to_none)]
+OptionalBoolFilter = Annotated[bool | None, BeforeValidator(empty_to_none)]
 
 
 def serialize(db, ticket):
@@ -44,13 +54,13 @@ def list_tickets(
     db: DB,
     user: CurrentUser,
     type: str | None = None,
-    category_id: int | None = None,
+    category_id: OptionalIntFilter = None,
     status: str | None = None,
     priority: str | None = None,
     department: str | None = None,
-    assignee_id: int | None = None,
-    author_id: int | None = None,
-    overdue: bool | None = None,
+    assignee_id: OptionalIntFilter = None,
+    author_id: OptionalIntFilter = None,
+    overdue: OptionalBoolFilter = None,
     unassigned: bool = False,
     q: str = "",
     sort: str = "created_at",
@@ -67,7 +77,7 @@ def list_tickets(
         ("assignee_id", assignee_id),
         ("author_id", author_id),
     ]:
-        if value is not None:
+        if value is not None and value != "":
             query = query.where(getattr(Ticket, field) == value)
     if department:
         query = query.where(
@@ -76,7 +86,13 @@ def list_tickets(
     if unassigned:
         if user.role != "ADMIN":
             raise HTTPException(403, "Раздел доступен администратору")
-        query = query.where(Ticket.assignee_id.is_(None))
+        active_assignees = select(User.id).where(
+            User.is_active, User.role.in_(["MANAGER", "ADMIN"])
+        )
+        query = query.where(
+            Ticket.status != "CLOSED",
+            or_(Ticket.assignee_id.is_(None), Ticket.assignee_id.not_in(active_assignees)),
+        )
     if overdue is not None:
         condition = Ticket.first_response_at.is_(None) & (Ticket.due_at < now())
         query = query.where(condition if overdue else ~condition)
@@ -94,6 +110,8 @@ def list_tickets(
         in ("created_at", "updated_at", "due_at", "number", "priority", "status")
         else Ticket.created_at
     )
+    if sort == "priority":
+        column = case({"LOW": 1, "MEDIUM": 2, "HIGH": 3}, value=Ticket.priority, else_=0)
     query = (
         query.order_by(
             column.asc() if order == "asc" else column.desc(), Ticket.id.desc()
@@ -184,7 +202,7 @@ def patch_ticket(ticket_id: int, data: TicketPatch, db: DB, user: CurrentUser):
     if "assignee_id" in values:
         validate_assignee(db, values["assignee_id"])
     if "resolution" in values:
-        ticket.resolution = values["resolution"]
+        change(db, ticket, user, "resolution", values.pop("resolution"))
     if "status" in values:
         set_status(db, ticket, user, values.pop("status"))
     if (

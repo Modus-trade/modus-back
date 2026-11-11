@@ -1,4 +1,6 @@
 """Add two unassigned demo tickets without modifying existing tickets. Safe to rerun."""
+import sys
+sys.stdout.reconfigure(encoding="utf-8")  # Windows: русский вывод не падает в консоли cp1252/cp866
 from datetime import timedelta
 from sqlalchemy import select, text
 from app.database import SessionLocal

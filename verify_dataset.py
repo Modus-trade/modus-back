@@ -4,6 +4,8 @@ Usage: python verify_dataset.py path/to/Датасет.docx [--sync]
 Only the source fields are compared. Dates, people and routing are demo additions.
 """
 
+import sys
+sys.stdout.reconfigure(encoding="utf-8")  # Windows: русский вывод не падает в консоли cp1252/cp866
 import json
 import re
 import sys

@@ -4,6 +4,8 @@
 Схему в целевой базе заранее создаёт `alembic upgrade head`. Целевые таблицы должны быть пустыми.
 """
 import sys
+sys.stdout.reconfigure(encoding="utf-8")  # Windows: русский вывод не падает в консоли cp1252/cp866
+import sys
 from pathlib import Path
 from sqlalchemy import create_engine, func, select, text
 from app.database import Base, engine as target

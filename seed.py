@@ -1,5 +1,7 @@
 """Idempotent demo seed. Never overwrites existing records."""
 
+import sys
+sys.stdout.reconfigure(encoding="utf-8")  # Windows: русский вывод не падает в консоли cp1252/cp866
 import json
 from datetime import timedelta
 from sqlalchemy import select

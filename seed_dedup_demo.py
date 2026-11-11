@@ -1,4 +1,6 @@
 """Optional idempotent demo: one shared problem affecting five demo employees."""
+import sys
+sys.stdout.reconfigure(encoding="utf-8")  # Windows: русский вывод не падает в консоли cp1252/cp866
 from datetime import timedelta
 from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert

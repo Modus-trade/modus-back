@@ -2,7 +2,7 @@ from collections import Counter
 from fastapi import APIRouter
 from ..security import CurrentUser, DB
 from ..services.tickets import require_manager, visible
-from .tickets import serialize
+from .tickets import preload, serialize
 from ..models import Category, now
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
@@ -11,6 +11,7 @@ router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 @router.get("/summary")
 def summary(db: DB, user: CurrentUser):
     require_manager(user)
+    preload(db)
     tickets = db.scalars(visible(user)).all()
     total = len(tickets)
     responses = [

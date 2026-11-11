@@ -7,7 +7,11 @@ from app.models import Category, Ticket, TicketHistory, User, now
 
 def seed():
     with SessionLocal() as db:
-        db.execute(text("BEGIN IMMEDIATE"))
+        postgres = db.get_bind().dialect.name == "postgresql"
+        if postgres:
+            db.execute(text("LOCK TABLE tickets IN SHARE ROW EXCLUSIVE MODE"))
+        else:
+            db.execute(text("BEGIN IMMEDIATE"))
         author = db.scalar(select(User).where(User.email == "employee@modus.demo"))
         admin = db.scalar(select(User).where(User.email == "admin@modus.demo"))
         if not author or not admin:
@@ -26,8 +30,12 @@ def seed():
             category = db.scalar(select(Category).where(Category.name == category_name, Category.is_active.is_(True)))
             if not category:
                 raise RuntimeError(f"Не найдена категория: {category_name}")
-            sequence = db.execute(text("SELECT seq FROM sqlite_sequence WHERE name='tickets'")).scalar() or 0
-            ticket = Ticket(number=f"A-{sequence + 1:03d}", type="PROBLEM", category_id=category.id,
+            if postgres:
+                ticket_id = db.execute(text("SELECT nextval(pg_get_serial_sequence('tickets', 'id'))")).scalar_one()
+            else:
+                sequence = db.execute(text("SELECT seq FROM sqlite_sequence WHERE name='tickets'")).scalar() or 0
+                ticket_id = sequence + 1
+            ticket = Ticket(id=ticket_id, number=f"A-{ticket_id:03d}", type="PROBLEM", category_id=category.id,
                             title=title, description=description, priority=priority, status="NEW",
                             author_id=author.id, assignee_id=None,
                             due_at=now() + timedelta(hours=category.sla_first_response_hours))

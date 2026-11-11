@@ -30,7 +30,8 @@ def attention_queue(
             .scalar_subquery()
         )
         activity_dates.append(func.coalesce(latest, Ticket.updated_at))
-    last_activity = func.max(*activity_dates, type_=DateTime())
+    latest_date = func.greatest if db.get_bind().dialect.name == "postgresql" else func.max
+    last_activity = latest_date(*activity_dates, type_=DateTime())
     conditions = {
         "unassigned": or_(
             Ticket.assignee_id.is_(None), Ticket.assignee_id.not_in(available)

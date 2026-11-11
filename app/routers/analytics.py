@@ -4,7 +4,7 @@ from fastapi import APIRouter, Query
 from ..security import Admin, CurrentUser, DB
 from ..services.attention import attention_queue
 from ..services.tickets import require_manager, visible
-from .tickets import serialize
+from .tickets import preload, serialize
 from ..models import Category, now
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
@@ -24,6 +24,7 @@ def attention(
     counts, total, rows, timestamp = attention_queue(
         db, reason, stale_days, q, priority, page, page_size
     )
+    preload(db)
     items = []
     for row in rows:
         item = serialize(db, row[0])
@@ -47,6 +48,7 @@ def attention(
 @router.get("/summary")
 def summary(db: DB, user: CurrentUser):
     require_manager(user)
+    preload(db)
     tickets = db.scalars(visible(user)).all()
     total = len(tickets)
     responses = [

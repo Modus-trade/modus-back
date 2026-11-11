@@ -32,6 +32,16 @@ OptionalIntFilter = Annotated[int | None, BeforeValidator(empty_to_none)]
 OptionalBoolFilter = Annotated[bool | None, BeforeValidator(empty_to_none)]
 
 
+def preload(db):
+    """Загружает пользователей и категории одним запросом каждые.
+
+    Дальше db.get(User/Category, id) берёт их из памяти сессии, без похода в базу —
+    это важно, когда база удалённая.
+    """
+    # Сессия хранит объекты по слабым ссылкам — держим их до конца запроса.
+    db.info["preloaded"] = (db.scalars(select(User)).all(), db.scalars(select(Category)).all())
+
+
 def serialize(db, ticket):
     data = jsonable_encoder(ticket)
     author, assignee, category = (
@@ -68,6 +78,7 @@ def list_tickets(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
+    preload(db)
     query = visible(user)
     for field, value in [
         ("type", type),
@@ -127,6 +138,21 @@ def list_tickets(
     }
 
 
+def next_ticket_id(db) -> int:
+    """Выдаёт следующий id обращения, безопасно при одновременных запросах."""
+    if db.get_bind().dialect.name == "postgresql":
+        return db.execute(
+            text("SELECT nextval(pg_get_serial_sequence('tickets', 'id'))")
+        ).scalar_one()
+    # SQLite: блокировка записи на время выдачи номера.
+    db.rollback()
+    db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    last = db.execute(
+        text("SELECT seq FROM sqlite_sequence WHERE name='tickets'")
+    ).scalar()
+    return (last or 0) + 1
+
+
 @router.post("/tickets", status_code=201)
 def create_ticket(data: TicketCreate, db: DB, user: CurrentUser):
     category = db.get(Category, data.category_id)
@@ -142,18 +168,12 @@ def create_ticket(data: TicketCreate, db: DB, user: CurrentUser):
         if assignee and assignee.is_active and assignee.role in ("MANAGER", "ADMIN")
         else None
     )
-    # A SQLite write lock protects number allocation across concurrent requests.
-    db.commit()
-    db.execute(text("BEGIN IMMEDIATE"))
-    sequence = (
-        db.execute(
-            text("SELECT seq FROM sqlite_sequence WHERE name='tickets'")
-        ).scalar()
-        or 0
-    )
+    # Номер обращения совпадает с его id: A-001, A-002…
+    ticket_id = next_ticket_id(db)
     ticket = Ticket(
         **data.model_dump(),
-        number=f"A-{sequence + 1:03d}",
+        id=ticket_id,
+        number=f"A-{ticket_id:03d}",
         author_id=user.id,
         assignee_id=assignee_id,
         due_at=now() + timedelta(hours=category.sla_first_response_hours),
@@ -165,6 +185,7 @@ def create_ticket(data: TicketCreate, db: DB, user: CurrentUser):
 
 @router.get("/tickets/{ticket_id}")
 def detail(ticket_id: int, db: DB, user: CurrentUser):
+    preload(db)
     ticket = get_ticket(db, user, ticket_id)
     result = serialize(db, ticket)
     result["comments"] = [

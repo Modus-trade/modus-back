@@ -1,9 +1,23 @@
+import asyncio
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from .routers import admin, analytics, auth, tickets, problems, notifications
+from .services.deadlines import deadline_notification_loop
 
-app = FastAPI(title="Модус · Система обратной связи", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app):
+    stop = asyncio.Event()
+    worker = asyncio.create_task(deadline_notification_loop(stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        await worker
+
+
+app = FastAPI(title="Модус · Система обратной связи", version="1.0.0", lifespan=lifespan)
 
 
 @app.middleware("http")

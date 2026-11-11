@@ -4,8 +4,7 @@ from datetime import timedelta
 from sqlalchemy import DateTime, case, func, or_, select
 from sqlalchemy.orm import Session
 from ..models import Attachment, Comment, Ticket, TicketHistory, User, now
-
-ACTIVE_STATUSES = ("NEW", "IN_REVIEW", "IN_PROGRESS", "AWAITING_CLARIFICATION")
+from .deadlines import ACTIVE_STATUSES
 
 
 def attention_queue(
@@ -37,6 +36,7 @@ def attention_queue(
             Ticket.assignee_id.is_(None), Ticket.assignee_id.not_in(available)
         ),
         "overdue": Ticket.first_response_at.is_(None) & (Ticket.due_at < timestamp),
+        "resolution_overdue": Ticket.resolution_due_at.is_not(None) & (Ticket.resolution_due_at <= timestamp),
         "stale": last_activity < timestamp - timedelta(days=stale_days),
     }
     any_reason = or_(*conditions.values())

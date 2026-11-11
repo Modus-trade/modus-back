@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
@@ -89,8 +90,41 @@ class TicketPatch(BaseModel):
     priority: Priority | None = None
     assignee_id: int | None = None
     resolution: str | None = Field(default=None, max_length=20000)
+    expected_status: Status | None = None
+    expected_resolution_review_version: int | None = Field(default=None, ge=0)
 
 
 class CommentCreate(BaseModel):
     body: str = Field(min_length=1, max_length=10000)
     is_clarification_request: bool = False
+
+
+class ResolutionDeadlinePatch(BaseModel):
+    resolution_due_at: datetime | None
+    expected_version: int = Field(ge=0)
+    reason: str = Field(default="", max_length=2000)
+
+    @field_validator("resolution_due_at")
+    @classmethod
+    def utc_deadline(cls, value):
+        if value is not None:
+            if value.utcoffset() is None:
+                raise ValueError("Укажите часовой пояс срока решения")
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def strip_reason(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+class ResolutionReviewCreate(BaseModel):
+    decision: Literal["confirm", "rework"]
+    expected_version: int = Field(ge=0)
+    explanation: str = Field(default="", max_length=10000)
+
+    @field_validator("explanation", mode="before")
+    @classmethod
+    def strip_explanation(cls, value):
+        return value.strip() if isinstance(value, str) else value

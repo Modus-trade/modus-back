@@ -1,5 +1,5 @@
 from fastapi import HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 from ..models import Ticket, TicketHistory, User, now
 
@@ -8,7 +8,7 @@ TRANSITIONS = {
     "IN_REVIEW": ["IN_PROGRESS", "AWAITING_CLARIFICATION", "IMPLEMENTED", "REJECTED"],
     "IN_PROGRESS": ["AWAITING_CLARIFICATION", "IMPLEMENTED", "REJECTED"],
     "AWAITING_CLARIFICATION": ["IN_REVIEW", "IN_PROGRESS", "REJECTED"],
-    "IMPLEMENTED": ["CLOSED"],
+    "IMPLEMENTED": [],
     "REJECTED": ["CLOSED"],
     "CLOSED": [],
 }
@@ -30,10 +30,26 @@ def visible(user: User):
     return query
 
 
-def get_ticket(db: Session, user: User, ticket_id: int) -> Ticket:
-    ticket = db.scalar(visible(user).where(Ticket.id == ticket_id))
+def get_ticket(db: Session, user: User, ticket_id: int, *, lock: bool = False) -> Ticket:
+    query = visible(user).where(Ticket.id == ticket_id)
+    if lock:
+        query = query.with_for_update()
+    ticket = db.scalar(query)
     if not ticket:
         raise HTTPException(404, "Обращение не найдено")
+    if lock and db.get_bind().dialect.name == "sqlite":
+        # SQLite ignores FOR UPDATE. Acquire a write lock while checking the state
+        # we read, so a concurrent confirmation cannot be overwritten by a PATCH.
+        result = db.execute(
+            update(Ticket)
+            .where(Ticket.id == ticket.id, Ticket.status == ticket.status,
+                   Ticket.resolution_review_version == ticket.resolution_review_version)
+            .values(updated_at=Ticket.updated_at)
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise HTTPException(409, "Обращение изменилось. Обновите карточку и повторите действие.")
+        db.refresh(ticket)
     return ticket
 
 
@@ -71,6 +87,8 @@ def change(db: Session, ticket: Ticket, actor: User, field: str, value):
 def set_status(db: Session, ticket: Ticket, actor: User, status: str):
     if status == ticket.status:
         return
+    if ticket.status == "IMPLEMENTED" and status == "CLOSED":
+        raise HTTPException(422, "Реализованное обращение закрывается после подтверждения результата автором")
     if status not in TRANSITIONS[ticket.status]:
         raise HTTPException(422, "Недопустимый переход статуса обращения")
     if (

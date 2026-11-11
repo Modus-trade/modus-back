@@ -9,9 +9,11 @@ from fastapi.responses import FileResponse
 from sqlalchemy import case, func, or_, select, text
 from ..services.notifications import notify
 from ..services.deduplication import affected_count
+from ..services.deadlines import ACTIVE_STATUSES, set_resolution_deadline
+from ..services.resolution_reviews import review_resolution
 from ..database import BASE_DIR
-from ..models import Attachment, Category, Comment, Ticket, TicketHistory, User, now
-from ..schemas import CommentCreate, TicketCreate, TicketPatch
+from ..models import Attachment, Category, Comment, ResolutionReview, Ticket, TicketHistory, User, now
+from ..schemas import CommentCreate, ResolutionDeadlinePatch, ResolutionReviewCreate, TicketCreate, TicketPatch
 from ..security import CurrentUser, DB
 from ..services.live import ticket_changed
 from ..services.tickets import (
@@ -66,6 +68,12 @@ def serialize(db, ticket):
         category_name=category.name,
         affected_count=(1 + db.info["affected_counts"].get(ticket.id, 0)) if "affected_counts" in db.info else db.scalar(select(affected_count()).where(Ticket.id == ticket.id)),
         overdue=ticket.first_response_at is None and now() > ticket.due_at,
+        resolution_due_at=ticket.resolution_due_at.isoformat() if ticket.resolution_due_at else None,
+        resolution_due_version=ticket.resolution_due_version,
+        resolution_review_version=ticket.resolution_review_version,
+        resolution_confirmed_at=ticket.resolution_confirmed_at.isoformat() if ticket.resolution_confirmed_at else None,
+        resolution_overdue=(ticket.status in ACTIVE_STATUSES and ticket.resolution_due_at is not None
+                            and ticket.resolution_due_at <= now()),
     )
     return data
 
@@ -226,15 +234,26 @@ def detail(ticket_id: int, db: DB, user: CurrentUser):
         {k: v for k, v in jsonable_encoder(a).items() if k != "stored_path"}
         for a in db.scalars(select(Attachment).where(Attachment.ticket_id == ticket_id))
     ]
+    result["resolution_reviews"] = [
+        jsonable_encoder(review)
+        for review in db.scalars(select(ResolutionReview)
+                                 .where(ResolutionReview.ticket_id == ticket_id)
+                                 .order_by(ResolutionReview.version.desc()))
+    ]
     return result
 
 
 @router.patch("/tickets/{ticket_id}")
 def patch_ticket(ticket_id: int, data: TicketPatch, db: DB, user: CurrentUser):
     require_manager(user)
-    ticket = get_ticket(db, user, ticket_id)
+    ticket = get_ticket(db, user, ticket_id, lock=True)
     old_status, old_assignee, old_resolution = ticket.status, ticket.assignee_id, ticket.resolution
     values = data.model_dump(exclude_unset=True)
+    expected_status = values.pop("expected_status", None)
+    expected_review_version = values.pop("expected_resolution_review_version", None)
+    if ((expected_status is not None and expected_status != ticket.status)
+            or (expected_review_version is not None and expected_review_version != ticket.resolution_review_version)):
+        raise HTTPException(409, "Обращение изменилось. Обновите карточку перед сохранением.")
     if ticket.status == "CLOSED" and values:
         raise HTTPException(422, "Закрытое обращение нельзя изменять")
     if "is_shared" in values:
@@ -257,6 +276,9 @@ def patch_ticket(ticket_id: int, data: TicketPatch, db: DB, user: CurrentUser):
         raise HTTPException(422, "Результат рассмотрения обязателен")
     for field, value in values.items():
         change(db, ticket, user, field, value)
+    if ticket.status == "IMPLEMENTED" and (old_status != "IMPLEMENTED" or old_resolution != ticket.resolution):
+        ticket.resolution_review_version += 1
+        ticket.resolution_confirmed_at = None
     if old_assignee != ticket.assignee_id:
         notify(db, ticket, user.id, "assigned")
     if ticket.resolution and ticket.status in ("IMPLEMENTED", "REJECTED", "CLOSED") and (old_resolution != ticket.resolution or old_status != ticket.status):
@@ -264,6 +286,28 @@ def patch_ticket(ticket_id: int, data: TicketPatch, db: DB, user: CurrentUser):
     elif old_status != ticket.status:
         notify(db, ticket, user.id, "clarification" if ticket.status == "AWAITING_CLARIFICATION" else "status")
     ticket_changed(db, ticket, "updated")
+    db.commit()
+    return serialize(db, ticket)
+
+
+@router.patch("/tickets/{ticket_id}/resolution-deadline")
+def patch_resolution_deadline(ticket_id: int, data: ResolutionDeadlinePatch, db: DB, user: CurrentUser):
+    require_manager(user)
+    ticket = get_ticket(db, user, ticket_id, lock=True)
+    if set_resolution_deadline(db, ticket, user, data):
+        notify(db, ticket, user.id, "deadline_changed")
+        ticket_changed(db, ticket, "deadline_changed")
+    db.commit()
+    return serialize(db, ticket)
+
+
+@router.post("/tickets/{ticket_id}/resolution-review")
+def submit_resolution_review(ticket_id: int, data: ResolutionReviewCreate, db: DB, user: CurrentUser):
+    ticket = get_ticket(db, user, ticket_id, lock=True)
+    if review_resolution(db, ticket, user, data):
+        kind = "resolution_confirmed" if data.decision == "confirm" else "resolution_rework"
+        notify(db, ticket, user.id, kind)
+        ticket_changed(db, ticket, kind)
     db.commit()
     return serialize(db, ticket)
 

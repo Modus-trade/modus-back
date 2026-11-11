@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 
@@ -55,8 +55,25 @@ class Ticket(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
     first_response_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     due_at: Mapped[datetime] = mapped_column(DateTime)
+    resolution_due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    resolution_due_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    resolution_review_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    resolution_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     __table_args__ = {"sqlite_autoincrement": True}
+
+
+class ResolutionReview(Base):
+    __tablename__ = "resolution_reviews"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    decision: Mapped[str] = mapped_column(String(20))
+    explanation: Mapped[str] = mapped_column(Text, default="")
+    resolution_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    __table_args__ = (UniqueConstraint("ticket_id", "version", name="uq_resolution_review_version"),)
 
 
 class Comment(Base):
@@ -77,6 +94,7 @@ class TicketHistory(Base):
     field: Mapped[str] = mapped_column(String(60))
     old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
@@ -105,5 +123,7 @@ class Notification(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
     kind: Mapped[str] = mapped_column(String(40))
+    deduplication_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    __table_args__ = (Index("uq_notification_deduplication_key", "deduplication_key", unique=True),)

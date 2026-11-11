@@ -15,6 +15,7 @@ def clients(tmp_path, monkeypatch):
     )
     Base.metadata.create_all(engine)
     sessions = sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr("app.services.deadlines.SessionLocal", sessions)
     with sessions() as db:
         for i, (role, department) in enumerate(
             [
@@ -134,7 +135,11 @@ def test_full_clarification_and_resolution_workflow(clients):
         == 200
     )
     assert manager.patch(path, json={"resolution": " "}).status_code == 422
-    assert manager.patch(path, json={"status": "CLOSED"}).status_code == 200
+    assert manager.patch(path, json={"status": "CLOSED"}).status_code == 422
+    implemented = employee.get(path).json()
+    assert employee.post(path + "/resolution-review", json={
+        "decision": "confirm", "expected_version": implemented["resolution_review_version"],
+    }).status_code == 200
     assert (
         employee.post(
             path + "/attachments", files={"file": ("late.txt", b"late", "text/plain")}
@@ -145,7 +150,9 @@ def test_full_clarification_and_resolution_workflow(clients):
     assert detail["resolution"] == "Семинар запланирован"
     assert detail["closed_at"]
     assert len(detail["comments"]) == 2
-    assert {h["field"] for h in detail["history"]} == {"status", "priority", "resolution"}
+    assert {h["field"] for h in detail["history"]} == {"status", "priority", "resolution", "resolution_review"}
+    assert detail["resolution_confirmed_at"]
+    assert detail["resolution_reviews"][0]["decision"] == "confirm"
     assert manager.patch(path, json={"status": "NEW"}).status_code == 422
     assert (
         manager.post(
@@ -444,7 +451,7 @@ def test_attention_overlaps_filters_pagination_and_activity(clients):
     response = admin.get('/api/analytics/attention')
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data['counts'] == {'total': 4, 'unassigned': 2, 'overdue': 2, 'stale': 2}
+    assert data['counts'] == {'total': 4, 'unassigned': 2, 'overdue': 2, 'resolution_overdue': 0, 'stale': 2}
     assert data['total'] == len({t['id'] for t in data['items']}) == 4
     assert data['items'][0]['id'] == ids[0]
     assert data['items'][0]['attention_reasons'] == ['unassigned', 'overdue', 'stale']

@@ -4,6 +4,13 @@ from ..realtime import queue
 from .tickets import visible
 
 LABELS = {"assigned": "Назначен ответственный", "comment": "Новый комментарий", "clarification": "Запрошено уточнение", "status": "Изменён статус", "result": "Опубликован результат", "created": "Новое обращение"}
+LABELS.update({
+    "deadline_changed": "Изменён срок решения",
+    "resolution_reminder": "До срока решения осталось не более суток",
+    "resolution_overdue": "Просрочен срок решения обращения",
+    "resolution_confirmed": "Автор подтвердил решение",
+    "resolution_rework": "Автор вернул обращение на доработку",
+})
 
 
 def serialize(n: Notification, allowed: bool, ticket: Ticket | None = None) -> dict:
@@ -23,7 +30,7 @@ def serialize(n: Notification, allowed: bool, ticket: Ticket | None = None) -> d
 def notify(db, ticket, actor_id, kind):
     recipients = {ticket.author_id, ticket.assignee_id}
     recipients.update(db.scalars(select(User.id).where(User.role == "ADMIN", User.is_active.is_(True))))
-    if kind in ("status", "result") and ticket.is_shared:
+    if kind in ("status", "result", "resolution_confirmed", "resolution_rework") and ticket.is_shared:
         recipients.update(db.scalars(select(TicketParticipant.user_id).where(TicketParticipant.ticket_id == ticket.id)))
     recipients.discard(None)
     recipients.discard(actor_id)

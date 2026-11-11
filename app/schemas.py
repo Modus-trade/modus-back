@@ -1,0 +1,94 @@
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+Role = Literal["EMPLOYEE", "MANAGER", "ADMIN"]
+Status = Literal[
+    "NEW",
+    "IN_REVIEW",
+    "IN_PROGRESS",
+    "AWAITING_CLARIFICATION",
+    "IMPLEMENTED",
+    "REJECTED",
+    "CLOSED",
+]
+Priority = Literal["LOW", "MEDIUM", "HIGH"]
+TicketType = Literal["PROBLEM", "PROPOSAL", "PRAISE"]
+
+
+class Login(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class UserPublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    email: str
+    full_name: str
+    role: Role
+    department: str
+    position: str
+    is_active: bool
+
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=72)
+    full_name: str = Field(min_length=1, max_length=255)
+    role: Role = "EMPLOYEE"
+    department: str = Field(min_length=1, max_length=150)
+    position: str = Field(default="", max_length=150)
+    is_active: bool = True
+
+
+class UserPatch(BaseModel):
+    email: EmailStr | None = None
+    password: str | None = Field(default=None, min_length=8, max_length=72)
+    full_name: str | None = Field(default=None, min_length=1, max_length=255)
+    role: Role | None = None
+    department: str | None = Field(default=None, min_length=1, max_length=150)
+    position: str | None = None
+    is_active: bool | None = None
+
+
+class CategoryCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+    default_assignee_id: int | None = None
+    sla_first_response_hours: int = Field(default=48, ge=1, le=8760)
+    is_active: bool = True
+    sort_order: int = 0
+
+
+class CategoryPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = None
+    default_assignee_id: int | None = None
+    sla_first_response_hours: int | None = Field(default=None, ge=1, le=8760)
+    is_active: bool | None = None
+    sort_order: int | None = None
+
+
+class TicketCreate(BaseModel):
+    type: TicketType
+    category_id: int
+    title: str = Field(min_length=3, max_length=250)
+    description: str = Field(min_length=10, max_length=20000)
+    proposed_solution: str | None = Field(default=None, max_length=20000)
+
+    @field_validator("title", "description", mode="before")
+    @classmethod
+    def strip_content(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+class TicketPatch(BaseModel):
+    status: Status | None = None
+    priority: Priority | None = None
+    assignee_id: int | None = None
+    resolution: str | None = Field(default=None, max_length=20000)
+
+
+class CommentCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=10000)
+    is_clarification_request: bool = False

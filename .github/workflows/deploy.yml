@@ -70,4 +70,10 @@ jobs:
           if git diff --cached --quiet; then echo "Изменений нет"; exit 0; fi
           git -c user.name="modus-sync[bot]" -c user.email="sync@modus.local" \
             commit -m "sync backend: $(echo "$MESSAGE" | head -1)" -m "Источник: Modus-trade/modus-back@${GITHUB_SHA::7}"
-          git push origin HEAD:main
+          # Бэкенд и фронтенд могут синхронизироваться одновременно — повторяем с подтягиванием.
+          for i in 1 2 3 4 5; do
+            git push origin HEAD:main && exit 0
+            sleep $((i * 3))
+            git pull --rebase origin main
+          done
+          exit 1

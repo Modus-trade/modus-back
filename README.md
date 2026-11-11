@@ -1,9 +1,22 @@
-# Модус Трейд — бэкенд
+<div align="center">
 
-FastAPI-сервер системы обратной связи сотрудников. Через него работают [сайт](https://github.com/Modus-trade/modus-front) и iOS-приложение.
-Демо: https://modus-trade.makquiz.site · Полный проект и документация: [Modus-trade/modus](https://github.com/Modus-trade/modus)
+<img src=".github/banner.svg" alt="Модус Трейд" width="720">
 
-## Запуск у себя
+<br><br>
+
+**API системы обратной связи сотрудников.**<br>Через него работают сайт и iOS-приложение: обращения, права, уведомления и живые события.
+
+<br>
+
+**[🌐 Демо](https://modus-trade.makquiz.site)** &nbsp;·&nbsp; **[⭐ Весь проект](https://github.com/Modus-trade/modus)** &nbsp;·&nbsp; **[🎨 Сайт](https://github.com/Modus-trade/modus-front)**
+
+<sub>Python 3.12 · FastAPI · SQLAlchemy 2 · Alembic · PostgreSQL · WebSocket</sub>
+
+</div>
+
+<br>
+
+## 🚀 Запуск у себя
 
 Нужен Python 3.12+. Настраивать ничего не нужно: без `.env` используется локальная SQLite (`app.db`).
 
@@ -22,7 +35,7 @@ uvicorn app.main:app --reload --port 8000
 
 Тесты: `pytest -q` (временная база, ваши данные не трогаются).
 
-## Структура
+## 📂 Структура
 
 ```text
 app/
@@ -40,7 +53,7 @@ tests/                 интеграционные тесты API
 scripts/deploy.sh      выкладка на сервере (запускает GitHub Actions)
 ```
 
-## Основные эндпоинты
+## 🔌 Основные эндпоинты
 
 | Метод | Путь | Что делает |
 | --- | --- | --- |
@@ -56,7 +69,7 @@ scripts/deploy.sh      выкладка на сервере (запускает 
 
 Полный список с параметрами есть в Swagger.
 
-## Переменные окружения
+## ⚙️ Переменные окружения
 
 | Переменная | По умолчанию | Назначение |
 | --- | --- | --- |
@@ -67,7 +80,7 @@ scripts/deploy.sh      выкладка на сервере (запускает 
 
 Пример лежит в `.env.example`. Файлы `.env` и `app.db` в git не попадают, боевая база хранится только на сервере.
 
-## Деплой
+## 🔄 Деплой
 
 Пуш в `main` запускает GitHub Actions:
 1. тесты;

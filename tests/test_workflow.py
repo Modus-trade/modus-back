@@ -448,7 +448,7 @@ def test_attention_overlaps_filters_pagination_and_activity(clients):
     assert data['total'] == len({t['id'] for t in data['items']}) == 4
     assert data['items'][0]['id'] == ids[0]
     assert data['items'][0]['attention_reasons'] == ['unassigned', 'overdue', 'stale']
-    assert data['notifications']['enabled'] is False
+    assert data['notifications']['enabled'] is True
     assert admin.get('/api/analytics/attention?reason=stale&stale_days=14').json()['total'] == 1
     assert admin.get('/api/analytics/attention?reason=unassigned').json()['total'] == 2
     assert admin.get('/api/analytics/attention?priority=HIGH').json()['total'] == 1
@@ -489,20 +489,19 @@ def test_attention_access_empty_and_legacy_assignee(clients):
     assert admin.get('/api/analytics/attention').json()['total'] == 0
 
 
-def test_notifications_and_live_events(clients):
+def test_live_events_over_websocket(clients):
     employee, _, manager, _, admin = clients
     with manager.websocket_connect("/api/ws") as ws_manager, employee.websocket_connect("/api/ws") as ws_employee:
         ticket = employee.post(
             "/api/tickets",
             json={"type": "PROBLEM", "category_id": 1, "title": "Живое событие", "description": "Проверка уведомлений"},
         ).json()
-        # Ответственный получает уведомление о новом обращении и событие изменения.
-        first = ws_manager.receive_json()
-        second = ws_manager.receive_json()
-        kinds = {first["type"], second["type"]}
-        assert kinds == {"notification", "ticket_changed"}
-        note = first if first["type"] == "notification" else second
-        assert note["notification"]["ticket_id"] == ticket["id"]
+        # Ответственный мгновенно получает уведомление и сигнал перечитать данные.
+        events = [ws_manager.receive_json(), ws_manager.receive_json()]
+        assert {e["type"] for e in events} == {"notification", "ticket_changed"}
+        note = next(e for e in events if e["type"] == "notification")["notification"]
+        assert note["ticket_id"] == ticket["id"] and note["kind"] == "assigned"
+        assert note["href"] == f"/tickets/{ticket['id']}"
         assert ws_employee.receive_json()["type"] == "ticket_changed"
 
         manager.post(
@@ -510,13 +509,18 @@ def test_notifications_and_live_events(clients):
             json={"body": "Уточните, пожалуйста", "is_clarification_request": True},
         )
         events = [ws_employee.receive_json(), ws_employee.receive_json()]
-        clarification = next(e for e in events if e["type"] == "notification")["notification"]
-        assert clarification["kind"] == "clarification"
+        live = next(e for e in events if e["type"] == "notification")["notification"]
+        assert live["kind"] == "clarification" and "body" not in live
 
-    listing = employee.get("/api/notifications").json()
-    assert listing["unread"] == 1
-    assert listing["items"][0]["kind"] == "clarification"
-    assert employee.post(f"/api/notifications/{listing['items'][0]['id']}/read").status_code == 200
-    assert employee.get("/api/notifications").json()["unread"] == 0
-    # Чужие уведомления недоступны.
-    assert admin.post(f"/api/notifications/{listing['items'][0]['id']}/read").status_code == 404
+    assert employee.get("/api/notifications").json()["unread_count"] == 1
+    assert employee.post(f"/api/notifications/read-ticket/{ticket['id']}").status_code == 200
+    assert employee.get("/api/notifications").json()["unread_count"] == 0
+
+
+def test_websocket_requires_session(clients):
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+    import pytest
+    with pytest.raises(WebSocketDisconnect):
+        with TestClient(app).websocket_connect("/api/ws") as ws:
+            ws.receive_text()

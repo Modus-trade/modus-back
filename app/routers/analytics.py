@@ -41,7 +41,7 @@ def attention(
         "page_size": page_size,
         "stale_days": stale_days,
         "generated_at": timestamp,
-        "notifications": {"enabled": False},
+        "notifications": {"enabled": True},
     }
 
 

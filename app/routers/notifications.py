@@ -1,33 +1,44 @@
 import os
 import jwt
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
-from sqlalchemy import func, select, update
-from ..models import Notification, User, now
+from sqlalchemy import select, func, update
+from ..models import Notification, Ticket, User, now
 from ..realtime import hub
 from ..security import CurrentUser, DB, SECRET
-from ..services.notify import serialize_notification
+from ..services.notifications import serialize
+from ..services.tickets import visible
 
-router = APIRouter(prefix="/api", tags=["notifications"])
-
-
-@router.get("/notifications")
-def list_notifications(db: DB, user: CurrentUser, limit: int = Query(30, ge=1, le=100)):
-    items = db.scalars(
-        select(Notification)
-        .where(Notification.user_id == user.id)
-        .order_by(Notification.created_at.desc(), Notification.id.desc())
-        .limit(limit)
-    ).all()
-    unread = db.scalar(
-        select(func.count()).where(Notification.user_id == user.id, Notification.read_at.is_(None))
-    )
-    return {"items": [serialize_notification(db, n) for n in items], "unread": unread}
+router = APIRouter(prefix="/api/notifications", tags=["notifications"])
+live = APIRouter(prefix="/api", tags=["realtime"])
 
 
-@router.post("/notifications/{notification_id}/read")
-def read_one(notification_id: int, db: DB, user: CurrentUser):
-    item = db.get(Notification, notification_id)
-    if not item or item.user_id != user.id:
+@router.get("")
+def notifications(db: DB, user: CurrentUser, page: int = Query(1, ge=1), unread_only: bool = False):
+    own = Notification.user_id == user.id
+    unread = db.scalar(select(func.count()).select_from(Notification).where(own, Notification.read_at.is_(None)))
+    query = select(Notification).where(own)
+    if unread_only:
+        query = query.where(Notification.read_at.is_(None))
+    total = db.scalar(select(func.count()).select_from(query.subquery()))
+    rows = db.scalars(query.order_by(Notification.id.desc()).offset((page - 1) * 20).limit(20)).all()
+    ids = [n.ticket_id for n in rows]
+    allowed = set(db.scalars(visible(user).with_only_columns(Ticket.id).where(Ticket.id.in_(ids))))
+    tickets = {t.id: t for t in db.scalars(select(Ticket).where(Ticket.id.in_(ids)))}
+    items = [serialize(n, n.ticket_id in allowed, tickets.get(n.ticket_id)) for n in rows]
+    return {"items": items, "total": total, "unread_count": unread}
+
+
+@router.post("/read-all")
+def read_all(db: DB, user: CurrentUser):
+    db.execute(update(Notification).where(Notification.user_id == user.id, Notification.read_at.is_(None)).values(read_at=now()))
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/{notification_id}/read")
+def read(notification_id: int, db: DB, user: CurrentUser):
+    item = db.scalar(select(Notification).where(Notification.id == notification_id, Notification.user_id == user.id))
+    if not item:
         raise HTTPException(404, "Уведомление не найдено")
     if item.read_at is None:
         item.read_at = now()
@@ -35,12 +46,14 @@ def read_one(notification_id: int, db: DB, user: CurrentUser):
     return {"ok": True}
 
 
-@router.post("/notifications/read-all")
-def read_all(db: DB, user: CurrentUser, ticket_id: int | None = None):
-    query = update(Notification).where(Notification.user_id == user.id, Notification.read_at.is_(None))
-    if ticket_id is not None:
-        query = query.where(Notification.ticket_id == ticket_id)
-    db.execute(query.values(read_at=now()))
+@router.post("/read-ticket/{ticket_id}")
+def read_ticket(ticket_id: int, db: DB, user: CurrentUser):
+    """Открыли обращение — события по нему считаются прочитанными."""
+    db.execute(
+        update(Notification)
+        .where(Notification.user_id == user.id, Notification.ticket_id == ticket_id, Notification.read_at.is_(None))
+        .values(read_at=now())
+    )
     db.commit()
     return {"ok": True}
 
@@ -55,9 +68,9 @@ def _user_from_cookie(db, token: str | None) -> int | None:
     return user.id if user and user.is_active else None
 
 
-@router.websocket("/ws")
+@live.websocket("/ws")
 async def websocket(ws: WebSocket, db: DB):
-    # Защита от чужих сайтов: как и для изменяющих запросов, проверяем Origin.
+    """Живые события: новые уведомления и изменения обращений без перезагрузки."""
     origin = ws.headers.get("origin")
     allowed = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
     if origin and origin not in allowed:
@@ -72,7 +85,6 @@ async def websocket(ws: WebSocket, db: DB):
     await hub.connect(user_id, ws)
     try:
         while True:
-            # Клиент присылает ping, чтобы соединение не закрывали прокси.
             if await ws.receive_text() == "ping":
                 await ws.send_text("pong")
     except WebSocketDisconnect:

@@ -47,6 +47,7 @@ class Ticket(Base):
     assignee_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"), nullable=True
     )
+    is_shared: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     priority: Mapped[str] = mapped_column(String(20), default="MEDIUM")
     status: Mapped[str] = mapped_column(String(40), default="NEW")
     resolution: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -91,16 +92,18 @@ class Attachment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
-class Notification(Base):
-    """Событие для пользователя: назначение, комментарий, уточнение, статус, результат."""
+class TicketParticipant(Base):
+    __tablename__ = "ticket_participants"
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
+
+class Notification(Base):
     __tablename__ = "notifications"
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
-    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     kind: Mapped[str] = mapped_column(String(40))
-    title: Mapped[str] = mapped_column(String(255))
-    body: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

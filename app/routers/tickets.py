@@ -7,11 +7,13 @@ from fastapi import APIRouter, HTTPException, Query, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
 from sqlalchemy import case, func, or_, select, text
+from ..services.notifications import notify
+from ..services.deduplication import affected_count
 from ..database import BASE_DIR
 from ..models import Attachment, Category, Comment, Ticket, TicketHistory, User, now
 from ..schemas import CommentCreate, TicketCreate, TicketPatch
 from ..security import CurrentUser, DB
-from ..services.notify import STATUS_LABELS, notify, short, ticket_changed
+from ..services.live import ticket_changed
 from ..services.tickets import (
     change,
     get_ticket,
@@ -41,6 +43,13 @@ def preload(db):
     """
     # Сессия хранит объекты по слабым ссылкам — держим их до конца запроса.
     db.info["preloaded"] = (db.scalars(select(User)).all(), db.scalars(select(Category)).all())
+    from ..models import TicketParticipant
+    db.info["affected_counts"] = dict(db.execute(
+        select(TicketParticipant.ticket_id, func.count())
+        .join(Ticket, Ticket.id == TicketParticipant.ticket_id)
+        .where(TicketParticipant.user_id != Ticket.author_id)
+        .group_by(TicketParticipant.ticket_id)
+    ).all())
 
 
 def serialize(db, ticket):
@@ -55,6 +64,7 @@ def serialize(db, ticket):
         department=author.department,
         assignee_name=assignee.full_name if assignee else None,
         category_name=category.name,
+        affected_count=(1 + db.info["affected_counts"].get(ticket.id, 0)) if "affected_counts" in db.info else db.scalar(select(affected_count()).where(Ticket.id == ticket.id)),
         overdue=ticket.first_response_at is None and now() > ticket.due_at,
     )
     return data
@@ -122,6 +132,8 @@ def list_tickets(
         in ("created_at", "updated_at", "due_at", "number", "priority", "status")
         else Ticket.created_at
     )
+    if sort == "affected_count":
+        column = affected_count()
     if sort == "priority":
         column = case({"LOW": 1, "MEDIUM": 2, "HIGH": 3}, value=Ticket.priority, else_=0)
     query = (
@@ -156,6 +168,8 @@ def next_ticket_id(db) -> int:
 
 @router.post("/tickets", status_code=201)
 def create_ticket(data: TicketCreate, db: DB, user: CurrentUser):
+    if data.is_shared and data.type != "PROBLEM":
+        raise HTTPException(422, "Присоединение доступно только к проблемам")
     category = db.get(Category, data.category_id)
     if not category or not category.is_active:
         raise HTTPException(422, "Выберите активную категорию")
@@ -181,7 +195,7 @@ def create_ticket(data: TicketCreate, db: DB, user: CurrentUser):
     )
     db.add(ticket)
     db.flush()
-    notify(db, assignee_id, ticket, user, "assigned", f"Новое обращение {ticket.number}", ticket.title)
+    notify(db, ticket, user.id, "assigned" if assignee_id else "created")
     ticket_changed(db, ticket, "created")
     db.commit()
     return serialize(db, ticket)
@@ -219,14 +233,19 @@ def detail(ticket_id: int, db: DB, user: CurrentUser):
 def patch_ticket(ticket_id: int, data: TicketPatch, db: DB, user: CurrentUser):
     require_manager(user)
     ticket = get_ticket(db, user, ticket_id)
+    old_status, old_assignee, old_resolution = ticket.status, ticket.assignee_id, ticket.resolution
     values = data.model_dump(exclude_unset=True)
     if ticket.status == "CLOSED" and values:
         raise HTTPException(422, "Закрытое обращение нельзя изменять")
+    if "is_shared" in values:
+        if values["is_shared"] is None or (values["is_shared"] and ticket.type != "PROBLEM"):
+            raise HTTPException(422, "Общей может быть только проблема")
+        if ticket.is_shared and values["is_shared"] is False:
+            raise HTTPException(422, "Общую проблему нельзя скрыть от присоединившихся")
     if any(v is None for k, v in values.items() if k in ("status", "priority")):
         raise HTTPException(422, "Статус и приоритет не могут быть пустыми")
     if "assignee_id" in values:
         validate_assignee(db, values["assignee_id"])
-    before = (ticket.status, ticket.assignee_id, ticket.resolution)
     if "resolution" in values:
         change(db, ticket, user, "resolution", values.pop("resolution"))
     if "status" in values:
@@ -238,15 +257,12 @@ def patch_ticket(ticket_id: int, data: TicketPatch, db: DB, user: CurrentUser):
         raise HTTPException(422, "Результат рассмотрения обязателен")
     for field, value in values.items():
         change(db, ticket, user, field, value)
-    old_status, old_assignee, old_resolution = before
-    if ticket.assignee_id != old_assignee:
-        notify(db, ticket.assignee_id, ticket, user, "assigned", f"Вас назначили ответственным · {ticket.number}", ticket.title)
-    final = ticket.status in ("IMPLEMENTED", "REJECTED")
-    if final and (ticket.status != old_status or ticket.resolution != old_resolution):
-        label = "Отклонено" if ticket.status == "REJECTED" else "Решение готово"
-        notify(db, ticket.author_id, ticket, user, "result", f"{label} · {ticket.number}", short(ticket.resolution))
-    elif ticket.status != old_status:
-        notify(db, ticket.author_id, ticket, user, "status", f"Статус: {STATUS_LABELS[ticket.status]} · {ticket.number}", ticket.title)
+    if old_assignee != ticket.assignee_id:
+        notify(db, ticket, user.id, "assigned")
+    if ticket.resolution and ticket.status in ("IMPLEMENTED", "REJECTED", "CLOSED") and (old_resolution != ticket.resolution or old_status != ticket.status):
+        notify(db, ticket, user.id, "result")
+    elif old_status != ticket.status:
+        notify(db, ticket, user.id, "clarification" if ticket.status == "AWAITING_CLARIFICATION" else "status")
     ticket_changed(db, ticket, "updated")
     db.commit()
     return serialize(db, ticket)
@@ -270,16 +286,10 @@ def comment(ticket_id: int, data: CommentCreate, db: DB, user: CurrentUser):
         and ticket.first_response_at is None
     ):
         ticket.first_response_at = now()
+    notify(db, ticket, user.id, "clarification" if data.is_clarification_request else "comment")
     item = Comment(ticket_id=ticket_id, author_id=user.id, **data.model_dump())
     ticket.updated_at = now()
     db.add(item)
-    if data.is_clarification_request:
-        notify(db, ticket.author_id, ticket, user, "clarification", f"Запросили уточнение · {ticket.number}", short(data.body))
-    else:
-        title = f"Новый комментарий · {ticket.number}"
-        notify(db, ticket.author_id, ticket, user, "comment", title, short(data.body))
-        if ticket.assignee_id != ticket.author_id:
-            notify(db, ticket.assignee_id, ticket, user, "comment", title, short(data.body))
     ticket_changed(db, ticket, "comment")
     db.commit()
     return {"id": item.id}

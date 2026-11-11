@@ -11,6 +11,7 @@ from ..database import BASE_DIR
 from ..models import Attachment, Category, Comment, Ticket, TicketHistory, User, now
 from ..schemas import CommentCreate, TicketCreate, TicketPatch
 from ..security import CurrentUser, DB
+from ..services.notify import STATUS_LABELS, notify, short, ticket_changed
 from ..services.tickets import (
     change,
     get_ticket,
@@ -179,6 +180,9 @@ def create_ticket(data: TicketCreate, db: DB, user: CurrentUser):
         due_at=now() + timedelta(hours=category.sla_first_response_hours),
     )
     db.add(ticket)
+    db.flush()
+    notify(db, assignee_id, ticket, user, "assigned", f"Новое обращение {ticket.number}", ticket.title)
+    ticket_changed(db, ticket, "created")
     db.commit()
     return serialize(db, ticket)
 
@@ -222,6 +226,7 @@ def patch_ticket(ticket_id: int, data: TicketPatch, db: DB, user: CurrentUser):
         raise HTTPException(422, "Статус и приоритет не могут быть пустыми")
     if "assignee_id" in values:
         validate_assignee(db, values["assignee_id"])
+    before = (ticket.status, ticket.assignee_id, ticket.resolution)
     if "resolution" in values:
         change(db, ticket, user, "resolution", values.pop("resolution"))
     if "status" in values:
@@ -233,6 +238,16 @@ def patch_ticket(ticket_id: int, data: TicketPatch, db: DB, user: CurrentUser):
         raise HTTPException(422, "Результат рассмотрения обязателен")
     for field, value in values.items():
         change(db, ticket, user, field, value)
+    old_status, old_assignee, old_resolution = before
+    if ticket.assignee_id != old_assignee:
+        notify(db, ticket.assignee_id, ticket, user, "assigned", f"Вас назначили ответственным · {ticket.number}", ticket.title)
+    final = ticket.status in ("IMPLEMENTED", "REJECTED")
+    if final and (ticket.status != old_status or ticket.resolution != old_resolution):
+        label = "Отклонено" if ticket.status == "REJECTED" else "Решение готово"
+        notify(db, ticket.author_id, ticket, user, "result", f"{label} · {ticket.number}", short(ticket.resolution))
+    elif ticket.status != old_status:
+        notify(db, ticket.author_id, ticket, user, "status", f"Статус: {STATUS_LABELS[ticket.status]} · {ticket.number}", ticket.title)
+    ticket_changed(db, ticket, "updated")
     db.commit()
     return serialize(db, ticket)
 
@@ -258,6 +273,14 @@ def comment(ticket_id: int, data: CommentCreate, db: DB, user: CurrentUser):
     item = Comment(ticket_id=ticket_id, author_id=user.id, **data.model_dump())
     ticket.updated_at = now()
     db.add(item)
+    if data.is_clarification_request:
+        notify(db, ticket.author_id, ticket, user, "clarification", f"Запросили уточнение · {ticket.number}", short(data.body))
+    else:
+        title = f"Новый комментарий · {ticket.number}"
+        notify(db, ticket.author_id, ticket, user, "comment", title, short(data.body))
+        if ticket.assignee_id != ticket.author_id:
+            notify(db, ticket.assignee_id, ticket, user, "comment", title, short(data.body))
+    ticket_changed(db, ticket, "comment")
     db.commit()
     return {"id": item.id}
 
@@ -294,6 +317,8 @@ async def upload(ticket_id: int, file: UploadFile, db: DB, user: CurrentUser):
         uploaded_by_id=user.id,
     )
     db.add(item)
+    ticket.updated_at = now()
+    ticket_changed(db, ticket, "attachment")
     try:
         db.commit()
     except Exception:

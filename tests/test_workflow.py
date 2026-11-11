@@ -487,3 +487,36 @@ def test_attention_access_empty_and_legacy_assignee(clients):
     finally:
         generator.close()
     assert admin.get('/api/analytics/attention').json()['total'] == 0
+
+
+def test_notifications_and_live_events(clients):
+    employee, _, manager, _, admin = clients
+    with manager.websocket_connect("/api/ws") as ws_manager, employee.websocket_connect("/api/ws") as ws_employee:
+        ticket = employee.post(
+            "/api/tickets",
+            json={"type": "PROBLEM", "category_id": 1, "title": "Живое событие", "description": "Проверка уведомлений"},
+        ).json()
+        # Ответственный получает уведомление о новом обращении и событие изменения.
+        first = ws_manager.receive_json()
+        second = ws_manager.receive_json()
+        kinds = {first["type"], second["type"]}
+        assert kinds == {"notification", "ticket_changed"}
+        note = first if first["type"] == "notification" else second
+        assert note["notification"]["ticket_id"] == ticket["id"]
+        assert ws_employee.receive_json()["type"] == "ticket_changed"
+
+        manager.post(
+            f"/api/tickets/{ticket['id']}/comments",
+            json={"body": "Уточните, пожалуйста", "is_clarification_request": True},
+        )
+        events = [ws_employee.receive_json(), ws_employee.receive_json()]
+        clarification = next(e for e in events if e["type"] == "notification")["notification"]
+        assert clarification["kind"] == "clarification"
+
+    listing = employee.get("/api/notifications").json()
+    assert listing["unread"] == 1
+    assert listing["items"][0]["kind"] == "clarification"
+    assert employee.post(f"/api/notifications/{listing['items'][0]['id']}/read").status_code == 200
+    assert employee.get("/api/notifications").json()["unread"] == 0
+    # Чужие уведомления недоступны.
+    assert admin.post(f"/api/notifications/{listing['items'][0]['id']}/read").status_code == 404

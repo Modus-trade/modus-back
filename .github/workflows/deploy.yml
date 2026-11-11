@@ -1,0 +1,73 @@
+name: Тесты и деплой
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+
+  deploy:
+    # На сервер попадает только код, прошедший тесты, и только из main.
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: SSH-ключ
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          echo "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+      - name: Выкладка кода
+        run: |
+          rsync -az --delete \
+            --exclude .git --exclude .github --exclude .venv --exclude uploads \
+            --exclude __pycache__ --exclude .pytest_cache --exclude '*.db' --exclude .env \
+            -e "ssh -i ~/.ssh/deploy" ./ modus@${{ secrets.DEPLOY_HOST }}:/srv/modus/backend/
+      - name: Миграции и перезапуск
+        run: ssh -i ~/.ssh/deploy modus@${{ secrets.DEPLOY_HOST }} 'bash /srv/modus/backend/scripts/deploy.sh'
+
+  sync:
+    # Обновляем папку backend/ в общем репозитории Modus-trade/modus.
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src
+      - name: SSH-ключ общего репозитория
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SYNC_SSH_KEY }}" > ~/.ssh/sync && chmod 600 ~/.ssh/sync
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - name: Синхронизация в modus
+        env:
+          GIT_SSH_COMMAND: ssh -i ~/.ssh/sync
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          git clone --depth 1 git@github.com:Modus-trade/modus.git mono
+          rsync -a --delete --exclude .git --exclude .github src/ mono/backend/
+          cd mono
+          git add -A backend
+          if git diff --cached --quiet; then echo "Изменений нет"; exit 0; fi
+          git -c user.name="modus-sync[bot]" -c user.email="sync@modus.local" \
+            commit -m "sync backend: $(echo "$MESSAGE" | head -1)" -m "Источник: Modus-trade/modus-back@${GITHUB_SHA::7}"
+          git push origin HEAD:main

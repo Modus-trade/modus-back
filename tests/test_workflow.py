@@ -135,6 +135,12 @@ def test_full_clarification_and_resolution_workflow(clients):
     )
     assert manager.patch(path, json={"resolution": " "}).status_code == 422
     assert manager.patch(path, json={"status": "CLOSED"}).status_code == 200
+    assert (
+        employee.post(
+            path + "/attachments", files={"file": ("late.txt", b"late", "text/plain")}
+        ).status_code
+        == 422
+    )
     detail = employee.get(path).json()
     assert detail["resolution"] == "Семинар запланирован"
     assert detail["closed_at"]
@@ -152,11 +158,19 @@ def test_full_clarification_and_resolution_workflow(clients):
 def test_scoped_list_filters_and_analytics(clients):
     employee, other, manager, outside, admin = clients
     create(employee)
-    create(other)
+    sales_ticket = create(other)
     assert employee.get("/api/tickets").json()["total"] == 1
     # The procurement manager is assigned both tickets, including the sales author.
     assert manager.get("/api/tickets").json()["total"] == 2
     assert outside.get("/api/tickets").json()["total"] == 1
+    assert (
+        outside.post(
+            f"/api/tickets/{sales_ticket['id']}/comments",
+            json={"body": "Принято руководителем подразделения"},
+        ).status_code
+        == 201
+    )
+    assert outside.get(f"/api/tickets/{sales_ticket['id']}").json()["first_response_at"]
     assert admin.get("/api/tickets", params={"q": "Обучение"}).json()["total"] == 2
     assert admin.get("/api/tickets", params={"type": "PROBLEM"}).json()["total"] == 0
     assert (

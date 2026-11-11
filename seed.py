@@ -98,7 +98,7 @@ def seed():
                 )
             )
         ]
-        records = json.loads((BASE_DIR / "dataset.json").read_text())
+        records = json.loads((BASE_DIR / "dataset.json").read_text(encoding="utf-8"))
         categories = {}
         mapping = [0, 0, 3, 5, 2, 5, 4, 5, 1, 1, 1, 4, 3, 3, 3, 5, 5, 5, 5, 0]
         types = {

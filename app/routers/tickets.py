@@ -210,7 +210,11 @@ def comment(ticket_id: int, data: CommentCreate, db: DB, user: CurrentUser):
         set_status(db, ticket, user, "AWAITING_CLARIFICATION")
     elif ticket.status == "AWAITING_CLARIFICATION" and user.id == ticket.author_id:
         set_status(db, ticket, user, "IN_REVIEW")
-    if user.id == ticket.assignee_id and ticket.first_response_at is None:
+    if (
+        user.role in ("MANAGER", "ADMIN")
+        and user.id != ticket.author_id
+        and ticket.first_response_at is None
+    ):
         ticket.first_response_at = now()
     item = Comment(ticket_id=ticket_id, author_id=user.id, **data.model_dump())
     ticket.updated_at = now()
@@ -221,7 +225,9 @@ def comment(ticket_id: int, data: CommentCreate, db: DB, user: CurrentUser):
 
 @router.post("/tickets/{ticket_id}/attachments", status_code=201)
 async def upload(ticket_id: int, file: UploadFile, db: DB, user: CurrentUser):
-    get_ticket(db, user, ticket_id)
+    ticket = get_ticket(db, user, ticket_id)
+    if ticket.status in ("CLOSED", "IMPLEMENTED", "REJECTED"):
+        raise HTTPException(422, "Нельзя прикрепить файл к завершённому обращению")
     filename = Path((file.filename or "file").replace("\\", "/")).name
     extension = Path(filename).suffix.lower()
     types = {

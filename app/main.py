@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from .routers import admin, analytics, auth, tickets
+from .routers import admin, analytics, auth, tickets, problems, notifications
 
 app = FastAPI(title="Модус · Система обратной связи", version="1.0.0")
 
@@ -25,7 +25,7 @@ async def protect_origin(request: Request, call_next):
     return response
 
 
-for router in (auth.router, tickets.router, admin.router, analytics.router):
+for router in (auth.router, tickets.router, admin.router, analytics.router, problems.router, notifications.router):
     app.include_router(router)
 
 

@@ -70,6 +70,7 @@ class CategoryPatch(BaseModel):
 
 
 class TicketCreate(BaseModel):
+    is_shared: bool = False
     type: TicketType
     category_id: int
     title: str = Field(min_length=3, max_length=250)
@@ -83,6 +84,7 @@ class TicketCreate(BaseModel):
 
 
 class TicketPatch(BaseModel):
+    is_shared: bool | None = None
     status: Status | None = None
     priority: Priority | None = None
     assignee_id: int | None = None

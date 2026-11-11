@@ -54,7 +54,7 @@ def validate_assignee(db: Session, assignee_id: int | None):
 def change(db: Session, ticket: Ticket, actor: User, field: str, value):
     old = getattr(ticket, field)
     if old != value:
-        if field in ("status", "priority", "assignee_id", "resolution"):
+        if field in ("status", "priority", "assignee_id", "resolution", "is_shared"):
             db.add(
                 TicketHistory(
                     ticket_id=ticket.id,

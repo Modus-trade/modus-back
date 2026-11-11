@@ -57,3 +57,13 @@ def test_similarity_validation(clients):
     assert other.post("/api/problems/similar", json={"text": "aa"}).status_code == 422
     assert other.post("/api/problems/similar", json={"text": "x" * 20501}).status_code == 422
     assert other.post("/api/tickets", json={"type": "PRAISE", "category_id": 1, "title": "Спасибо коллегам", "description": "Отличная совместная работа", "is_shared": True}).status_code == 422
+
+
+def test_repeated_problems_in_summary(clients):
+    author, other, manager, outside, admin = clients
+    ticket = problem(author)
+    problem(author, "Сломался кофейный аппарат")
+    assert admin.get("/api/analytics/summary").json()["repeated"] == []
+    assert other.post(f"/api/problems/{ticket['id']}/join").status_code == 200
+    repeated = admin.get("/api/analytics/summary").json()["repeated"]
+    assert [(r["id"], r["affected_count"]) for r in repeated] == [(ticket["id"], 2)]

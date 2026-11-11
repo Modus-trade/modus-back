@@ -74,4 +74,10 @@ def summary(db: DB, user: CurrentUser):
         else None,
         "overdue_count": len(overdue),
         "overdue_tickets": [serialize(db, t) for t in overdue],
+        # Повторяющиеся проблемы: общие проблемы, к которым присоединились другие сотрудники.
+        "repeated": sorted(
+            (item for item in (serialize(db, t) for t in tickets if t.type == "PROBLEM" and t.is_shared)
+             if item["affected_count"] > 1),
+            key=lambda item: (-item["affected_count"], item["number"]),
+        )[:5],
     }

@@ -19,21 +19,35 @@
 ## 🚀 Запуск у себя
 
 Нужен Python 3.12+. Настраивать ничего не нужно: без `.env` используется локальная SQLite (`app.db`).
+Самый простой путь — весь проект сразу: [инструкция в modus](https://github.com/Modus-trade/modus#-запуск-у-себя).
+
+**Windows (PowerShell):**
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1          # ошибка про сценарии → Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
+pip install -r requirements.txt
+alembic upgrade head
+python seed.py                     # демо-данные, пароль у всех: demo1234
+uvicorn app.main:app --port 8000
+```
+
+**macOS / Linux:**
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
-alembic upgrade head               # создать базу
-python seed.py                     # демо-данные, пароль у всех: demo1234
-uvicorn app.main:app --reload --port 8000
+alembic upgrade head
+python seed.py
+uvicorn app.main:app --port 8000
 ```
 
 - Проверка: http://127.0.0.1:8000/api/health → `{"status":"ok"}`
 - Документация API (Swagger): http://127.0.0.1:8000/docs
 - Сайт из `modus-front` по умолчанию подключается именно сюда.
 
-Тесты: `pytest -q` (временная база, ваши данные не трогаются).
+Тесты: `python -m pytest -q` (временная база, ваши данные не трогаются).
 
 ## 📂 Структура
 

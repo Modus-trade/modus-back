@@ -106,3 +106,15 @@ def voice(audio_base64: str, audio_format: str) -> dict | None:
     except (TypeError, ValueError):
         pass
     return result
+
+
+def transcribe(audio_base64: str, audio_format: str) -> str | None:
+    """Только расшифровка голосового сообщения (тот же /voice, берём дословный текст)."""
+    data = _call(
+        "/voice",
+        {"audio_base64": audio_base64, "format": audio_format},
+        float(os.getenv("AI_VOICE_TIMEOUT", "45")),
+    )
+    if not data:
+        return None
+    return str(data.get("transcript") or "").strip()[:10000]

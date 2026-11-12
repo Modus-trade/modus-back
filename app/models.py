@@ -84,6 +84,10 @@ class Comment(Base):
     body: Mapped[str] = mapped_column(Text)
     is_clarification_request: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    # Голосовое сообщение: запись лежит во вложениях, расшифровка приходит от ИИ позже.
+    audio_id: Mapped[int | None] = mapped_column(ForeignKey("attachments.id"), nullable=True, default=None)
+    audio_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    transcript: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 
 
 class TicketHistory(Base):

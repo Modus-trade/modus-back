@@ -3,7 +3,8 @@ from pathlib import Path
 import uuid
 from typing import Annotated
 from pydantic import BeforeValidator
-from fastapi import APIRouter, HTTPException, Query, UploadFile
+import base64
+from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Query, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
 from sqlalchemy import case, func, or_, select, text
@@ -16,6 +17,7 @@ from ..models import Attachment, Category, Comment, ResolutionReview, Ticket, Ti
 from ..schemas import CommentCreate, ResolutionDeadlinePatch, ResolutionReviewCreate, TicketCreate, TicketPatch
 from ..security import CurrentUser, DB
 from ..services.live import ticket_changed
+from ..services import ai
 from ..services.tickets import (
     change,
     get_ticket,
@@ -241,9 +243,11 @@ def detail(ticket_id: int, db: DB, user: CurrentUser):
             .order_by(TicketHistory.created_at, TicketHistory.id)
         )
     ]
+    voice_ids = {c["audio_id"] for c in result["comments"] if c.get("audio_id")}
     result["attachments"] = [
         {k: v for k, v in jsonable_encoder(a).items() if k != "stored_path"}
         for a in db.scalars(select(Attachment).where(Attachment.ticket_id == ticket_id))
+        if a.id not in voice_ids
     ]
     result["resolution_reviews"] = [
         jsonable_encoder(review)
@@ -323,14 +327,10 @@ def submit_resolution_review(ticket_id: int, data: ResolutionReviewCreate, db: D
     return serialize(db, ticket)
 
 
-@router.post("/tickets/{ticket_id}/comments", status_code=201)
-def comment(ticket_id: int, data: CommentCreate, db: DB, user: CurrentUser):
-    ticket = get_ticket(db, user, ticket_id)
-    if not data.body.strip():
-        raise HTTPException(422, "Введите текст комментария")
+def add_comment(db, ticket: Ticket, user: User, body: str, clarify: bool, **extra) -> Comment:
     if ticket.status in ("CLOSED", "IMPLEMENTED", "REJECTED"):
         raise HTTPException(422, "Обсуждение завершённого обращения закрыто")
-    if data.is_clarification_request:
+    if clarify:
         require_manager(user)
         set_status(db, ticket, user, "AWAITING_CLARIFICATION")
     elif ticket.status == "AWAITING_CLARIFICATION" and user.id == ticket.author_id:
@@ -341,12 +341,80 @@ def comment(ticket_id: int, data: CommentCreate, db: DB, user: CurrentUser):
         and ticket.first_response_at is None
     ):
         ticket.first_response_at = now()
-    notify(db, ticket, user.id, "clarification" if data.is_clarification_request else "comment")
-    item = Comment(ticket_id=ticket_id, author_id=user.id, **data.model_dump())
+    notify(db, ticket, user.id, "clarification" if clarify else "comment")
+    item = Comment(ticket_id=ticket.id, author_id=user.id, body=body, is_clarification_request=clarify, **extra)
     ticket.updated_at = now()
     db.add(item)
     ticket_changed(db, ticket, "comment")
+    return item
+
+
+@router.post("/tickets/{ticket_id}/comments", status_code=201)
+def comment(ticket_id: int, data: CommentCreate, db: DB, user: CurrentUser):
+    ticket = get_ticket(db, user, ticket_id)
+    if not data.body.strip():
+        raise HTTPException(422, "Введите текст комментария")
+    item = add_comment(db, ticket, user, data.body, data.is_clarification_request)
     db.commit()
+    return {"id": item.id}
+
+
+AUDIO = {".m4a": "audio/mp4", ".mp4": "audio/mp4", ".aac": "audio/aac", ".webm": "audio/webm", ".ogg": "audio/ogg"}
+VOICE_BODY = "🎤 Голосовое сообщение"
+
+
+def transcribe_comment(comment_id: int):
+    """Фоном: расшифровка от ИИ. Пришла — все, кто открыл обращение, увидят текст сразу."""
+    from ..database import SessionLocal
+    with SessionLocal() as db:
+        item = db.get(Comment, comment_id)
+        audio = db.get(Attachment, item.audio_id) if item and item.audio_id else None
+        if not audio or not Path(audio.stored_path).is_file():
+            return
+        raw = Path(audio.stored_path).read_bytes()
+        text = ai.transcribe(base64.b64encode(raw).decode(), Path(audio.stored_path).suffix.lstrip(".") or "m4a")
+        item.transcript = text if text else ""
+        ticket_changed(db, db.get(Ticket, item.ticket_id), "comment")
+        db.commit()
+
+
+@router.post("/tickets/{ticket_id}/voice", status_code=201)
+async def voice_comment(
+    ticket_id: int,
+    file: UploadFile,
+    background: BackgroundTasks,
+    db: DB,
+    user: CurrentUser,
+    seconds: int = Form(0, ge=0, le=600),
+    is_clarification_request: bool = Form(False),
+):
+    """Голосовое сообщение в обсуждении: запись сохраняется сразу, расшифровка догоняет."""
+    ticket = get_ticket(db, user, ticket_id)
+    extension = Path((file.filename or "voice.m4a").replace("\\", "/")).suffix.lower() or ".m4a"
+    if extension not in AUDIO:
+        raise HTTPException(422, "Поддерживаются записи m4a, webm, ogg")
+    content = await file.read(10 * 1024 * 1024 + 1)
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(413, "Запись слишком длинная")
+    if len(content) < 500:
+        raise HTTPException(422, "Запись пустая")
+    UPLOADS.mkdir(exist_ok=True)
+    path = UPLOADS / f"{uuid.uuid4().hex}{extension}"
+    path.write_bytes(content)
+    audio = Attachment(ticket_id=ticket.id, filename=f"Голосовое{extension}", stored_path=str(path),
+                       content_type=AUDIO[extension], size_bytes=len(content), uploaded_by_id=user.id)
+    db.add(audio)
+    try:
+        db.flush()
+        item = add_comment(db, ticket, user, VOICE_BODY, is_clarification_request,
+                           audio_id=audio.id, audio_seconds=seconds or None,
+                           transcript=None if ai.enabled() else "")
+        db.commit()
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    if ai.enabled():
+        background.add_task(transcribe_comment, item.id)
     return {"id": item.id}
 
 

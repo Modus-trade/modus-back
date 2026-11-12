@@ -57,9 +57,14 @@ def rule_type(title: str, description: str) -> str:
     return "PROBLEM"
 
 
+# Короткие названия систем, которые общий разбор текста отбрасывает (слова короче 3 букв).
+SYSTEMS = re.compile(r"(?<![а-яa-z0-9])(1[сc]|crm|erp|vpn|wi-?fi|битрикс\w*|bitrix\w*)(?![а-яa-z0-9])", re.I)
+
+
 def rule_category(db, title: str, description: str) -> tuple[int | None, float]:
     """Категория по словам и по похожим уже размеченным обращениям."""
-    words = tokens(_text(title, description))
+    text = _text(title, description)
+    words = tokens(text)
     if not words:
         return None, 0.0
     categories = db.scalars(select(Category).where(Category.is_active.is_(True))).all()
@@ -68,6 +73,8 @@ def rule_category(db, title: str, description: str) -> tuple[int | None, float]:
         keys = {w for w in KEYWORDS.get(c.name, "").split()}
         hits = sum(any(word.startswith(k) or k.startswith(word) for k in keys) for word in words)
         scores[c.id] += min(hits, 4) * 0.12
+        if c.name == "Интеграции и IT" and SYSTEMS.search(text):
+            scores[c.id] += 0.5
     # Ближайшие обращения: их категорию проставил человек.
     for t in db.scalars(select(Ticket).order_by(Ticket.id.desc()).limit(500)):
         if t.category_id in scores:

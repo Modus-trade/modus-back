@@ -52,7 +52,7 @@ def suggest(data: SuggestQuery, db: DB, user: CurrentUser):
         return {"type": rule_type(data.title, data.description), "category_id": None, "category": None,
                 "assignee_name": None, "sla_hours": None, "confidence": 0, "reason": "", "source": "rules"}
     return {**info, "type": rule_type(data.title, data.description), "confidence": confidence,
-            "reason": "Подобрано по ключевым словам и похожим обращениям", "source": "rules"}
+            "reason": "", "source": "rules"}
 
 
 def similar_items(db, user, ticket: Ticket):

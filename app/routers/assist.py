@@ -1,16 +1,15 @@
-"""Подсказки: тип и категория при подаче, похожие обращения и вариант решения для ответственного."""
+"""Тип и категория при подаче, вариант решения текущего обращения."""
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from ..models import Category, Ticket, User
+from ..models import Category, User
 from ..security import CurrentUser, DB
 from ..services import ai
-from ..services.hints import rule_category, rule_type, similar_tickets
-from ..services.tickets import get_ticket, require_manager, visible
+from ..services.hints import rule_category, rule_type
+from ..services.tickets import get_ticket, require_manager
 
 router = APIRouter(prefix="/api", tags=["assist"])
 
-FINAL = ("IMPLEMENTED", "REJECTED", "CLOSED")
 
 
 class SuggestQuery(BaseModel):
@@ -79,49 +78,17 @@ def voice(data: VoiceQuery, db: DB, user: CurrentUser):
     }
 
 
-def similar_items(db, user, ticket: Ticket):
-    items = []
-    for other, score in similar_tickets(db, visible(user), ticket):
-        category = db.get(Category, other.category_id)
-        items.append({
-            "id": other.id, "number": other.number, "title": other.title, "status": other.status,
-            "category": category.name if category else "", "resolution": other.resolution,
-            "created_at": other.created_at, "score": score,
-        })
-    return items
-
-
-@router.get("/tickets/{ticket_id}/similar")
-def similar(ticket_id: int, db: DB, user: CurrentUser):
-    """Похожие обращения — только для ответственных и администраторов, только из доступных им."""
-    require_manager(user)
-    ticket = get_ticket(db, user, ticket_id)
-    return {"items": similar_items(db, user, ticket), "ai_enabled": ai.enabled()}
-
-
 @router.post("/tickets/{ticket_id}/solve")
 def solve(ticket_id: int, db: DB, user: CurrentUser):
-    """Вариант решения от ИИ с опорой на похожие обращения."""
+    """Вариант решения текущего обращения."""
     require_manager(user)
     ticket = get_ticket(db, user, ticket_id)
-    items = similar_items(db, user, ticket)
     category = db.get(Category, ticket.category_id)
     result = ai.solve(
         {"type": ticket.type, "category": category.name if category else "", "title": ticket.title,
          "description": ticket.description, "proposed_solution": ticket.proposed_solution},
-        [{"number": i["number"], "title": i["title"], "status": i["status"], "resolution": i["resolution"]}
-         for i in items],
+        [],
     )
     if result:
         return {**result, "source": "ai"}
-    # Без ИИ: показываем, как решали самые похожие завершённые обращения.
-    solved = [i for i in items if i["status"] in FINAL and i["resolution"]]
-    if not solved:
-        raise HTTPException(503, "ИИ сейчас недоступен, а похожих решённых обращений нет")
-    return {
-        "summary": "ИИ сейчас недоступен. Вот как решали похожие обращения:",
-        "steps": [f"{i['number']}: {i['resolution'][:300]}" for i in solved[:3]],
-        "based_on": [i["number"] for i in solved[:3]],
-        "reply_draft": "",
-        "source": "rules",
-    }
+    raise HTTPException(503, "Сервис подсказок временно недоступен. Попробуйте позже.")

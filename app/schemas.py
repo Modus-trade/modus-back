@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import Literal
+from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 Role = Literal["EMPLOYEE", "MANAGER", "ADMIN"]
@@ -71,6 +72,7 @@ class CategoryPatch(BaseModel):
 
 
 class TicketCreate(BaseModel):
+    self_service_attempt_id: UUID | None = None
     is_shared: bool = False
     type: TicketType
     category_id: int

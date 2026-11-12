@@ -1,14 +1,13 @@
-"""Подсказки без ИИ: тип и категория по правилам, поиск похожих обращений.
+"""Подсказки без ИИ: тип и категория по правилам.
 
 Работают всегда, в том числе при локальном запуске без AI_URL.
 """
 import re
-from difflib import SequenceMatcher
 
 from sqlalchemy import select
 
 from ..models import Category, Ticket
-from .deduplication import tokens
+from .text_matching import tokens
 
 PRAISE = re.compile(r"спасибо|благодар|молодц|отличн\w* работ|признател|хочу отметить|понравил", re.I)
 PROPOSAL = re.compile(
@@ -84,18 +83,3 @@ def rule_category(db, title: str, description: str) -> tuple[int | None, float]:
     if best is None or scores[best] <= 0:
         return None, 0.0
     return best, round(min(0.6, scores[best]), 2)
-
-
-def similar_tickets(db, base_query, ticket: Ticket, limit: int = 5) -> list[tuple[Ticket, float]]:
-    """Похожие обращения среди доступных пользователю (base_query = visible(user))."""
-    words = tokens(_text(ticket.title, ticket.description))
-    found = []
-    for other in db.scalars(base_query.where(Ticket.id != ticket.id)):
-        body = tokens(_text(other.title, other.description))
-        score = 0.7 * _score(words, body) + 0.3 * SequenceMatcher(None, ticket.title.lower(), other.title.lower()).ratio()
-        if other.category_id == ticket.category_id:
-            score += 0.05
-        if score >= 0.18:
-            found.append((other, round(score, 2)))
-    found.sort(key=lambda x: -x[1])
-    return found[:limit]

@@ -4,6 +4,7 @@ from ..models import Category, Ticket, User
 from ..schemas import CategoryCreate, CategoryPatch, UserCreate, UserPatch, UserPublic
 from ..security import Admin, CurrentUser, DB, passwords
 from ..services.tickets import change, validate_assignee
+from ..realtime import queue
 
 router = APIRouter(prefix="/api", tags=["administration"])
 
@@ -80,6 +81,8 @@ def patch_user(user_id: int, data: UserPatch, db: DB, user: Admin):
     if not item:
         raise HTTPException(404, "Пользователь не найден")
     values = data.model_dump(exclude_unset=True)
+    access_changed = any(key in values and values[key] != getattr(item, key)
+                         for key in ("role", "department", "is_active"))
     if any(v is None for v in values.values()):
         raise HTTPException(422, "Поле не может быть пустым")
     if item.id == user.id and (
@@ -107,5 +110,7 @@ def patch_user(user_id: int, data: UserPatch, db: DB, user: Admin):
             Category.default_assignee_id == item.id
         )):
             category.default_assignee_id = None
+    if access_changed:
+        queue(db, {item.id}, {"type": "access_changed"})
     db.commit()
     return item

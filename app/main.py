@@ -3,7 +3,7 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from .routers import admin, analytics, assist, auth, tickets, problems, notifications
+from .routers import admin, analytics, assist, auth, tickets, problems, notifications, knowledge, knowledge_editor
 from .services.deadlines import deadline_notification_loop
 
 @asynccontextmanager
@@ -39,7 +39,7 @@ async def protect_origin(request: Request, call_next):
     return response
 
 
-for router in (auth.router, tickets.router, admin.router, analytics.router, problems.router, notifications.router, notifications.live, assist.router):
+for router in (auth.router, tickets.router, admin.router, analytics.router, problems.router, notifications.router, notifications.live, assist.router, knowledge_editor.router, knowledge.router):
     app.include_router(router)
 
 

@@ -9,11 +9,11 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
 from sqlalchemy import case, func, or_, select, text
 from ..services.notifications import notify
-from ..services.deduplication import affected_count
+from ..services.problems import affected_count
 from ..services.deadlines import ACTIVE_STATUSES, set_resolution_deadline
 from ..services.resolution_reviews import review_resolution
 from ..database import BASE_DIR
-from ..models import Attachment, Category, Comment, ResolutionReview, Ticket, TicketHistory, User, now
+from ..models import Attachment, Category, Comment, KnowledgeAttempt, ResolutionReview, Ticket, TicketHistory, User, now
 from ..schemas import CommentCreate, ResolutionDeadlinePatch, ResolutionReviewCreate, TicketCreate, TicketPatch
 from ..security import CurrentUser, DB
 from ..services.live import ticket_changed
@@ -196,8 +196,19 @@ def create_ticket(data: TicketCreate, db: DB, user: CurrentUser):
     )
     # Номер обращения совпадает с его id: A-001, A-002…
     ticket_id = next_ticket_id(db)
+    attempt = None
+    if data.self_service_attempt_id is not None:
+        attempt = db.scalar(select(KnowledgeAttempt).where(
+            KnowledgeAttempt.id == str(data.self_service_attempt_id), KnowledgeAttempt.user_id == user.id,
+        ).with_for_update())
+        if attempt is None:
+            raise HTTPException(404, "Попытка поиска решения не найдена")
+        if attempt.ticket_id is not None:
+            return serialize(db, get_ticket(db, user, attempt.ticket_id))
+        if attempt.joined_problem_id is not None:
+            raise HTTPException(409, "Вы уже присоединились к общей проблеме. Откройте новую форму.")
     ticket = Ticket(
-        **data.model_dump(),
+        **data.model_dump(exclude={"self_service_attempt_id"}),
         id=ticket_id,
         number=f"A-{ticket_id:03d}",
         author_id=user.id,
@@ -206,6 +217,11 @@ def create_ticket(data: TicketCreate, db: DB, user: CurrentUser):
     )
     db.add(ticket)
     db.flush()
+    if attempt is not None:
+        attempt.ticket_id = ticket.id
+        attempt.resolved_at = None
+        attempt.resolved_article_id = None
+        attempt.resolved_version = None
     notify(db, ticket, user.id, "assigned" if assignee_id else "created")
     ticket_changed(db, ticket, "created")
     db.commit()
@@ -351,7 +367,7 @@ def add_comment(db, ticket: Ticket, user: User, body: str, clarify: bool, **extr
 
 @router.post("/tickets/{ticket_id}/comments", status_code=201)
 def comment(ticket_id: int, data: CommentCreate, db: DB, user: CurrentUser):
-    ticket = get_ticket(db, user, ticket_id)
+    ticket = get_ticket(db, user, ticket_id, lock=True)
     if not data.body.strip():
         raise HTTPException(422, "Введите текст комментария")
     item = add_comment(db, ticket, user, data.body, data.is_clarification_request)
@@ -389,7 +405,7 @@ async def voice_comment(
     is_clarification_request: bool = Form(False),
 ):
     """Голосовое сообщение в обсуждении: запись сохраняется сразу, расшифровка догоняет."""
-    ticket = get_ticket(db, user, ticket_id)
+    ticket = get_ticket(db, user, ticket_id, lock=True)
     extension = Path((file.filename or "voice.m4a").replace("\\", "/")).suffix.lower() or ".m4a"
     if extension not in AUDIO:
         raise HTTPException(422, "Поддерживаются записи m4a, webm, ogg")
@@ -420,7 +436,7 @@ async def voice_comment(
 
 @router.post("/tickets/{ticket_id}/attachments", status_code=201)
 async def upload(ticket_id: int, file: UploadFile, db: DB, user: CurrentUser):
-    ticket = get_ticket(db, user, ticket_id)
+    ticket = get_ticket(db, user, ticket_id, lock=True)
     if ticket.status in ("CLOSED", "IMPLEMENTED", "REJECTED"):
         raise HTTPException(422, "Нельзя прикрепить файл к завершённому обращению")
     filename = Path((file.filename or "file").replace("\\", "/")).name

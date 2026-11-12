@@ -16,6 +16,7 @@ def clients(tmp_path, monkeypatch):
     Base.metadata.create_all(engine)
     sessions = sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr("app.services.deadlines.SessionLocal", sessions)
+    monkeypatch.setattr("app.services.integrations.SessionLocal", sessions)
     with sessions() as db:
         for i, (role, department) in enumerate(
             [

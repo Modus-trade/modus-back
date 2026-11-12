@@ -3,7 +3,7 @@ from sqlalchemy import select
 from ..models import Category, Ticket, User
 from ..schemas import CategoryCreate, CategoryPatch, UserCreate, UserPatch, UserPublic
 from ..security import Admin, CurrentUser, DB, passwords
-from ..services.tickets import change, validate_assignee
+from ..services.tickets import change, validate_assignee, imported_assignee, eligible_assignee_ids
 
 router = APIRouter(prefix="/api", tags=["administration"])
 
@@ -57,9 +57,7 @@ def users(db: DB, user: Admin):
 @router.get("/assignees", response_model=list[UserPublic])
 def assignees(db: DB, user: CurrentUser):
     # Separate read-only directory; the full user administration stays ADMIN-only.
-    return db.scalars(
-        select(User).where(User.is_active, User.role.in_(["MANAGER", "ADMIN"]))
-    ).all()
+    return db.scalars(select(User).where(User.id.in_(eligible_assignee_ids(db)))).all()
 
 
 @router.post("/users", response_model=UserPublic, status_code=201)
@@ -98,7 +96,7 @@ def patch_user(user_id: int, data: UserPatch, db: DB, user: Admin):
         item.password_hash = passwords.hash(values.pop("password"))
     for key, value in values.items():
         setattr(item, key, value)
-    if not item.is_active or item.role == "EMPLOYEE":
+    if not item.is_active or (item.role == "EMPLOYEE" and not imported_assignee(db, item.id)):
         for ticket in db.scalars(select(Ticket).where(
             Ticket.assignee_id == item.id, Ticket.status != "CLOSED"
         )):

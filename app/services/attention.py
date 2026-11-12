@@ -5,6 +5,7 @@ from sqlalchemy import DateTime, case, func, or_, select
 from sqlalchemy.orm import Session
 from ..models import Attachment, Comment, Ticket, TicketHistory, User, now
 from .deadlines import ACTIVE_STATUSES
+from .tickets import eligible_assignee_ids
 
 
 def attention_queue(
@@ -17,9 +18,7 @@ def attention_queue(
     page_size: int,
 ):
     timestamp = now()
-    available = select(User.id).where(
-        User.is_active, User.role.in_(["ADMIN", "MANAGER"])
-    )
+    available = eligible_assignee_ids(db)
     activity_dates = [Ticket.updated_at]
     for model in (Comment, Attachment, TicketHistory):
         latest = (

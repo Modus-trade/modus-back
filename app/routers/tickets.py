@@ -24,6 +24,7 @@ from ..services.tickets import (
     require_manager,
     set_status,
     validate_assignee,
+    eligible_assignee_ids,
     joined_ticket,
     visible,
 )
@@ -119,9 +120,7 @@ def list_tickets(
     if unassigned:
         if user.role != "ADMIN":
             raise HTTPException(403, "Раздел доступен администратору")
-        active_assignees = select(User.id).where(
-            User.is_active, User.role.in_(["MANAGER", "ADMIN"])
-        )
+        active_assignees = eligible_assignee_ids(db)
         query = query.where(
             Ticket.status != "CLOSED",
             or_(Ticket.assignee_id.is_(None), Ticket.assignee_id.not_in(active_assignees)),
@@ -191,7 +190,7 @@ def create_ticket(data: TicketCreate, db: DB, user: CurrentUser):
     )
     assignee_id = (
         assignee.id
-        if assignee and assignee.is_active and assignee.role in ("MANAGER", "ADMIN")
+        if assignee and assignee.id in eligible_assignee_ids(db)
         else None
     )
     # Номер обращения совпадает с его id: A-001, A-002…
@@ -260,8 +259,10 @@ def detail(ticket_id: int, db: DB, user: CurrentUser):
 
 @router.patch("/tickets/{ticket_id}")
 def patch_ticket(ticket_id: int, data: TicketPatch, db: DB, user: CurrentUser):
-    require_manager(user)
+    if user.role == "EMPLOYEE" and db.scalar(select(Ticket.id).where(Ticket.id == ticket_id, Ticket.assignee_id == user.id)) is None:
+        raise HTTPException(403, "Недостаточно прав")
     ticket = get_ticket(db, user, ticket_id, lock=True)
+    require_manager(user, ticket)
     old_status, old_assignee, old_resolution = ticket.status, ticket.assignee_id, ticket.resolution
     values = data.model_dump(exclude_unset=True)
     expected_status = values.pop("expected_status", None)
@@ -307,8 +308,10 @@ def patch_ticket(ticket_id: int, data: TicketPatch, db: DB, user: CurrentUser):
 
 @router.patch("/tickets/{ticket_id}/resolution-deadline")
 def patch_resolution_deadline(ticket_id: int, data: ResolutionDeadlinePatch, db: DB, user: CurrentUser):
-    require_manager(user)
+    if user.role == "EMPLOYEE" and db.scalar(select(Ticket.id).where(Ticket.id == ticket_id, Ticket.assignee_id == user.id)) is None:
+        raise HTTPException(403, "Недостаточно прав")
     ticket = get_ticket(db, user, ticket_id, lock=True)
+    require_manager(user, ticket)
     if set_resolution_deadline(db, ticket, user, data):
         notify(db, ticket, user.id, "deadline_changed")
         ticket_changed(db, ticket, "deadline_changed")
@@ -331,12 +334,12 @@ def add_comment(db, ticket: Ticket, user: User, body: str, clarify: bool, **extr
     if ticket.status in ("CLOSED", "IMPLEMENTED", "REJECTED"):
         raise HTTPException(422, "Обсуждение завершённого обращения закрыто")
     if clarify:
-        require_manager(user)
+        require_manager(user, ticket)
         set_status(db, ticket, user, "AWAITING_CLARIFICATION")
     elif ticket.status == "AWAITING_CLARIFICATION" and user.id == ticket.author_id:
         set_status(db, ticket, user, "IN_REVIEW")
     if (
-        user.role in ("MANAGER", "ADMIN")
+        (user.role in ("MANAGER", "ADMIN") or ticket.assignee_id == user.id)
         and user.id != ticket.author_id
         and ticket.first_response_at is None
     ):

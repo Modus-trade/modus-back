@@ -251,6 +251,7 @@ def test_migration_upgrades_legacy_rows_and_fresh_database(tmp_path, monkeypatch
 
 
 def test_background_worker_starts_without_browser_and_stops(monkeypatch):
+    monkeypatch.setattr("app.services.integrations.run_cycle", lambda: None)
     import asyncio
     from app.main import lifespan
 
@@ -269,6 +270,7 @@ def test_background_worker_starts_without_browser_and_stops(monkeypatch):
 
 
 def test_background_worker_retries_after_failure(monkeypatch):
+    monkeypatch.setattr("app.services.integrations.run_cycle", lambda: None)
     import asyncio
     from app.main import lifespan
 

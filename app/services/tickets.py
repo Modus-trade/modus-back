@@ -17,7 +17,7 @@ TRANSITIONS = {
 def visible(user: User):
     query = select(Ticket)
     if user.role == "EMPLOYEE":
-        query = query.where(Ticket.author_id == user.id)
+        query = query.where(or_(Ticket.author_id == user.id, Ticket.assignee_id == user.id))
     elif user.role == "MANAGER":
         query = query.where(
             or_(
@@ -62,17 +62,17 @@ def get_ticket(db: Session, user: User, ticket_id: int, *, lock: bool = False) -
     return ticket
 
 
-def require_manager(user: User):
-    if user.role == "EMPLOYEE":
+def require_manager(user: User, ticket=None):
+    if user.role == "EMPLOYEE" and (ticket is None or ticket.assignee_id != user.id):
         raise HTTPException(403, "Недостаточно прав")
 
 
 def validate_assignee(db: Session, assignee_id: int | None):
     if assignee_id is not None:
         user = db.get(User, assignee_id)
-        if not user or not user.is_active or user.role == "EMPLOYEE":
+        if not user or not user.is_active or (user.role == "EMPLOYEE" and not imported_assignee(db, user.id)):
             raise HTTPException(
-                422, "Выберите активного руководителя или администратора"
+                422, "Выберите активного исполнителя из списка"
             )
 
 
@@ -112,3 +112,22 @@ def set_status(db: Session, ticket: Ticket, actor: User, status: str):
     change(db, ticket, actor, "status", status)
     if status == "CLOSED":
         ticket.closed_at = now()
+
+
+def imported_assignee_ids(db):
+    # Disabling external exchange must not revoke local work assignments.
+    import json
+    from ..integration_models import DirectoryEntry
+    return {row.user_id for row in db.scalars(select(DirectoryEntry).where(
+        DirectoryEntry.kind == 'employee', DirectoryEntry.user_id.is_not(None)))
+        if json.loads(row.payload).get('active')}
+
+
+def imported_assignee(db, user_id):
+    return user_id in imported_assignee_ids(db)
+
+
+def eligible_assignee_ids(db):
+    imported = imported_assignee_ids(db)
+    return [u.id for u in db.scalars(select(User).where(User.is_active))
+            if u.role in ('ADMIN', 'MANAGER') or u.id in imported]

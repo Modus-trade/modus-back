@@ -39,6 +39,8 @@ def notify(db, ticket, actor_id, kind):
         item = Notification(user_id=recipient.id, ticket_id=ticket.id, kind=kind)
         db.add(item)
         db.flush()
+        from .integrations import enqueue_notification
+        enqueue_notification(db, item)
         # Мгновенно отправляем получателю (уйдёт после commit).
         allowed = db.scalar(visible(recipient).with_only_columns(Ticket.id).where(Ticket.id == ticket.id)) is not None
         queue(db, {recipient.id}, {"type": "notification", "notification": serialize(item, allowed, ticket)})

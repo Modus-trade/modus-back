@@ -5,16 +5,20 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from .routers import admin, analytics, assist, auth, tickets, problems, notifications
 from .services.deadlines import deadline_notification_loop
+from .services.integrations import integration_loop
+from .routers import integrations, bitrix_bot
 
 @asynccontextmanager
 async def lifespan(app):
     stop = asyncio.Event()
     worker = asyncio.create_task(deadline_notification_loop(stop))
+    integration_worker = asyncio.create_task(integration_loop(stop))
     try:
         yield
     finally:
         stop.set()
         await worker
+        await integration_worker
 
 
 app = FastAPI(title="Модус · Система обратной связи", version="1.0.0", lifespan=lifespan)
@@ -39,7 +43,7 @@ async def protect_origin(request: Request, call_next):
     return response
 
 
-for router in (auth.router, tickets.router, admin.router, analytics.router, problems.router, notifications.router, notifications.live, assist.router):
+for router in (bitrix_bot.router, integrations.router, auth.router, tickets.router, admin.router, analytics.router, problems.router, notifications.router, notifications.live, assist.router):
     app.include_router(router)
 
 

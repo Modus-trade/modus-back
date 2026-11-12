@@ -66,6 +66,8 @@ def _notify_once(db, ticket, recipient, kind, timestamp):
     if notification_id is None:
         return 0
     item = db.get(Notification, notification_id)
+    from .integrations import enqueue_notification
+    enqueue_notification(db, item)
     allowed = db.scalar(visible(recipient).with_only_columns(Ticket.id).where(Ticket.id == ticket.id)) is not None
     queue(db, {recipient.id}, {"type": "notification", "notification": serialize(item, allowed, ticket)})
     return 1
@@ -89,7 +91,7 @@ def dispatch_deadline_notifications(db, timestamp=None):
                 sent += _notify_once(db, ticket, admin, "resolution_overdue", timestamp)
         else:
             assignee = db.get(User, ticket.assignee_id) if ticket.assignee_id else None
-            if assignee and assignee.is_active and assignee.role in ("ADMIN", "MANAGER"):
+            if assignee and assignee.is_active:
                 sent += _notify_once(db, ticket, assignee, "resolution_reminder", timestamp)
     return sent
 

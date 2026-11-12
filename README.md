@@ -82,6 +82,8 @@ scripts/deploy.sh      выкладка на сервере (запускает 
 | GET/PATCH | `/api/tickets/{id}` | карточка, смена статуса, приоритета, ответственного, результата |
 | POST | `/api/tickets/{id}/comments`, `/attachments` | комментарий или уточнение, файл |
 | POST | `/api/problems/similar`, `/api/problems/{id}/join` | похожие обращения, присоединиться |
+| POST | `/api/assist/suggest` | тип и категория по тексту и фото (ИИ или правила) |
+| GET · POST | `/api/tickets/{id}/similar`, `/api/tickets/{id}/solve` | похожие обращения и вариант решения для ответственного |
 | GET/POST | `/api/notifications`, `/read-all`, `/{id}/read` | уведомления |
 | WS | `/api/ws` | живые события (cookie сайта или токен из `GET /api/ws-token` для приложения) |
 | GET | `/api/analytics/summary`, `/api/analytics/attention` | аналитика, центр внимания |
@@ -97,6 +99,8 @@ scripts/deploy.sh      выкладка на сервере (запускает 
 | `JWT_SECRET` | случайный при запуске | задайте, чтобы сессии не сбрасывались при перезапуске |
 | `COOKIE_SECURE` | `false` | `true` при HTTPS |
 | `ALLOWED_ORIGINS` | локальные адреса | адреса сайта через запятую |
+| `AI_URL`, `AI_KEY` | не заданы | ИИ-сервис для подсказок; без них работают правила |
+| `AI_TIMEOUT`, `AI_SOLVE_TIMEOUT` | `4`, `25` | сколько секунд ждать ИИ |
 
 Пример лежит в `.env.example`. Файлы `.env` и `app.db` в git не попадают, боевая база хранится только на сервере.
 

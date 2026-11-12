@@ -69,11 +69,8 @@ def voice(data: VoiceQuery, db: DB, user: CurrentUser):
     result = ai.voice(data.audio_base64, data.format)
     if not result:
         raise HTTPException(503, "Голосовой ввод сейчас недоступен — продиктуйте через микрофон на клавиатуре")
-    info = category_info(db, result["category_id"]) if result["type"] else None
-    if info:
-        suggestion = {**info, "type": result["type"], "confidence": 0.8, "reason": result["reason"], "source": "ai"}
-    else:
-        suggestion = suggest(SuggestQuery(title=result["title"], description=result["description"]), db, user)
+    # Тип и категорию определяем по готовому описанию: /classify стабильнее, чем разбор длинной речи.
+    suggestion = suggest(SuggestQuery(title=result["title"], description=result["description"]), db, user)
     return {
         "transcript": result["transcript"],
         "title": result["title"],

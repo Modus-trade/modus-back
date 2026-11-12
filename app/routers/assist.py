@@ -55,6 +55,33 @@ def suggest(data: SuggestQuery, db: DB, user: CurrentUser):
             "reason": "", "source": "rules"}
 
 
+class VoiceQuery(BaseModel):
+    audio_base64: str = Field(min_length=100, max_length=12_000_000)
+    format: str = Field(default="m4a", pattern=r"^(m4a|mp4|aac|wav|webm|ogg|mp3|caf)$")
+
+
+@router.post("/assist/voice")
+def voice(data: VoiceQuery, db: DB, user: CurrentUser):
+    """Обращение голосом: ИИ распознаёт речь, пишет тему и описание и подбирает тип и категорию.
+
+    Сотрудник потом сам проверяет и правит поля — ничего не отправляется автоматически.
+    """
+    result = ai.voice(data.audio_base64, data.format)
+    if not result:
+        raise HTTPException(503, "Голосовой ввод сейчас недоступен — продиктуйте через микрофон на клавиатуре")
+    info = category_info(db, result["category_id"]) if result["type"] else None
+    if info:
+        suggestion = {**info, "type": result["type"], "confidence": 0.8, "reason": result["reason"], "source": "ai"}
+    else:
+        suggestion = suggest(SuggestQuery(title=result["title"], description=result["description"]), db, user)
+    return {
+        "transcript": result["transcript"],
+        "title": result["title"],
+        "description": result["description"],
+        "suggestion": suggestion,
+    }
+
+
 def similar_items(db, user, ticket: Ticket):
     items = []
     for other, score in similar_tickets(db, visible(user), ticket):

@@ -74,3 +74,35 @@ def solve(ticket: dict, similar: list[dict]) -> dict | None:
         "based_on": [str(n) for n in (data.get("based_on") or [])][:5],
         "reply_draft": str(data.get("reply_draft") or "")[:1500],
     }
+
+
+def voice(audio_base64: str, audio_format: str) -> dict | None:
+    """Голосовое обращение: речь → текст → тема и описание (и, если модель смогла, тип и категория)."""
+    data = _call(
+        "/voice",
+        {"audio_base64": audio_base64, "format": audio_format},
+        float(os.getenv("AI_VOICE_TIMEOUT", "45")),
+    )
+    if not data:
+        return None
+    transcript = str(data.get("transcript") or "").strip()
+    title = str(data.get("title") or "").strip()[:250]
+    description = str(data.get("description") or "").strip()[:20000]
+    if not transcript:
+        return None
+    result = {
+        "transcript": transcript[:20000],
+        "title": title or transcript[:80],
+        "description": description or transcript,
+        "type": None,
+        "category_id": None,
+        "reason": str(data.get("reason") or "")[:200],
+    }
+    try:
+        if data.get("type") in ("PROBLEM", "PROPOSAL", "PRAISE"):
+            result["type"] = data["type"]
+        if data.get("category_id") is not None:
+            result["category_id"] = int(data["category_id"])
+    except (TypeError, ValueError):
+        pass
+    return result

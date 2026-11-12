@@ -69,3 +69,24 @@ def test_similar_and_solve(clients, monkeypatch):
     data = manager.post(f"/api/tickets/{base['id']}/solve").json()
     assert data["source"] == "ai" and data["steps"] == ["Выделить стенд", "Назначить занятия"]
     assert seen["similar"][0]["number"] == twin["number"]
+
+
+
+def test_voice_fills_fields(clients, monkeypatch):
+    employee = clients[0]
+    monkeypatch.delenv("AI_URL", raising=False)
+    monkeypatch.setattr(ai, "voice", lambda a, f: {
+        "transcript": "предлагаю провести обучение по новинкам", "title": "Обучение по новинкам",
+        "description": "Предлагаю провести обучение и вебинар по новым продуктам", "type": None, "category_id": None, "reason": "",
+    })
+    r = employee.post("/api/assist/voice", json={"audio_base64": "A" * 200, "format": "m4a"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["title"] == "Обучение по новинкам"
+    assert body["suggestion"]["type"] == "PROPOSAL" and body["suggestion"]["category_id"] == 1
+
+
+def test_voice_unavailable(clients, monkeypatch):
+    monkeypatch.setattr(ai, "voice", lambda a, f: None)
+    r = clients[0].post("/api/assist/voice", json={"audio_base64": "A" * 200, "format": "m4a"})
+    assert r.status_code == 503

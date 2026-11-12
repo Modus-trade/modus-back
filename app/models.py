@@ -135,3 +135,96 @@ class Notification(Base):
 
 # Register integration tables in the shared metadata (also used by test databases).
 from .integration_models import IntegrationSettings, DirectoryEntry, BitrixTask, IntegrationJob  # noqa: E402,F401
+
+class KnowledgeArticle(Base):
+    __tablename__ = "knowledge_articles"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), unique=True)
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"))
+    title: Mapped[str] = mapped_column(String(250))
+    summary: Mapped[str] = mapped_column(String(600))
+    body: Mapped[str] = mapped_column(Text)
+    visibility: Mapped[str] = mapped_column(String(20))
+    department: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    is_published: Mapped[bool] = mapped_column(Boolean, default=False)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    editor_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    review_due_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class KnowledgeAttempt(Base):
+    __tablename__ = "knowledge_attempts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    department: Mapped[str] = mapped_column(String(150))
+    ticket_id: Mapped[int | None] = mapped_column(ForeignKey("tickets.id"), nullable=True, unique=True)
+    joined_problem_id: Mapped[int | None] = mapped_column(ForeignKey("tickets.id"), nullable=True)
+    resolved_article_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_articles.id"), nullable=True)
+    resolved_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+
+
+class KnowledgeExposure(Base):
+    __tablename__ = "knowledge_exposures"
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("knowledge_attempts.id"), primary_key=True)
+    article_id: Mapped[int] = mapped_column(ForeignKey("knowledge_articles.id"), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    helped: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class KnowledgeDraft(Base):
+    __tablename__ = "knowledge_drafts"
+    article_id: Mapped[int] = mapped_column(ForeignKey("knowledge_articles.id"), primary_key=True)
+    title: Mapped[str] = mapped_column(String(250), default="")
+    summary: Mapped[str] = mapped_column(String(600), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    visibility: Mapped[str] = mapped_column(String(20), default="DEPARTMENT")
+    owner_department: Mapped[str] = mapped_column(String(150))
+    confidential_case: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    status: Mapped[str] = mapped_column(String(20), default="DRAFT")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    review_days: Mapped[int] = mapped_column(Integer, default=90)
+    editor_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class KnowledgeRevision(Base):
+    __tablename__ = "knowledge_revisions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    article_id: Mapped[int] = mapped_column(ForeignKey("knowledge_articles.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(250))
+    summary: Mapped[str] = mapped_column(String(600))
+    body: Mapped[str] = mapped_column(Text)
+    visibility: Mapped[str] = mapped_column(String(20))
+    department: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    editor_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    reviewer_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    approved_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    review_due_at: Mapped[datetime] = mapped_column(DateTime)
+    __table_args__ = (UniqueConstraint("article_id", "version", name="uq_knowledge_revision"),)
+
+
+class KnowledgeAudit(Base):
+    __tablename__ = "knowledge_audit"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    article_id: Mapped[int] = mapped_column(ForeignKey("knowledge_articles.id"), index=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    action: Mapped[str] = mapped_column(String(30))
+    version: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class KnowledgeReport(Base):
+    __tablename__ = "knowledge_reports"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    article_id: Mapped[int] = mapped_column(ForeignKey("knowledge_articles.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    reporter_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    reason: Mapped[str] = mapped_column(String(2000))
+    is_open: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    __table_args__ = (UniqueConstraint("article_id", "version", "reporter_id", name="uq_knowledge_report"),)

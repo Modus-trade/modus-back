@@ -4,8 +4,8 @@ import sqlalchemy as sa
 import uuid
 
 
-revision = '008'
-down_revision = '007'
+revision = '010'
+down_revision = '009'
 branch_labels = None
 depends_on = None
 

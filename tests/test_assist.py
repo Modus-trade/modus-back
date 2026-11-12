@@ -42,18 +42,13 @@ def test_ai_unreachable_falls_back_fast(clients, monkeypatch):
     assert ai._down_until > 0  # следующие запросы не ждут недоступный ИИ
 
 
-def test_similar_and_solve(clients, monkeypatch):
+def test_solve_uses_available_context(clients, monkeypatch):
     employee, other, manager, outside_manager, admin = clients
     monkeypatch.delenv("AI_URL", raising=False)
     base = ticket(employee, "Нет практики с оборудованием", "На обучении мало практики с новым оборудованием, нужны практические занятия")
     twin = ticket(employee, "Мало практики на обучении", "Хотим больше практических занятий с оборудованием на обучении")
     ticket(employee, "Сломался кондиционер", "В офисе жарко, кондиционер не работает уже неделю")
 
-    assert employee.get(f"/api/tickets/{base['id']}/similar").status_code == 403
-    items = manager.get(f"/api/tickets/{base['id']}/similar").json()["items"]
-    assert [i["id"] for i in items] == [twin["id"]]
-    assert {"number", "title", "status", "resolution", "score"} <= items[0].keys()
-    assert outside_manager.get(f"/api/tickets/{base['id']}/similar").status_code == 404
 
     # Без ИИ и без решённых похожих — честно говорим, что подсказать нечего.
     assert manager.post(f"/api/tickets/{base['id']}/solve").status_code == 503
@@ -68,7 +63,7 @@ def test_similar_and_solve(clients, monkeypatch):
     monkeypatch.setattr(ai, "solve", fake_solve)
     data = manager.post(f"/api/tickets/{base['id']}/solve").json()
     assert data["source"] == "ai" and data["steps"] == ["Выделить стенд", "Назначить занятия"]
-    assert seen["similar"][0]["number"] == twin["number"]
+    assert seen["similar"] == []
 
 
 

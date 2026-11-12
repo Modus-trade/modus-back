@@ -20,7 +20,7 @@ from ..models import Attachment, Category, Ticket, TicketParticipant, User, now
 from ..integration_models import BitrixBot, BotDialog, BotReceipt, DirectoryEntry
 from .bitrix_client import BitrixError
 from .integrations import active, public_url, settings
-from .deduplication import ACTIVE, affected_count, similarity
+from .bot_matching import ACTIVE, affected_count, similarity
 from .hints import rule_category, rule_type
 from .tickets import eligible_assignee_ids
 from .notifications import notify

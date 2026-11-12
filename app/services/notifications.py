@@ -5,6 +5,8 @@ from .tickets import visible
 
 LABELS = {"assigned": "Назначен ответственный", "comment": "Новый комментарий", "clarification": "Запрошено уточнение", "status": "Изменён статус", "result": "Опубликован результат", "created": "Новое обращение"}
 LABELS.update({
+    "knowledge_review": "Инструкция ожидает проверки перед публикацией",
+    "knowledge_report": "Сообщение о возможных конфиденциальных данных в инструкции",
     "deadline_changed": "Изменён срок решения",
     "resolution_reminder": "До срока решения осталось не более суток",
     "resolution_overdue": "Просрочен срок решения обращения",

@@ -30,7 +30,8 @@ def _call(path: str, payload: dict, timeout: float) -> dict | None:
             f"{url}{path}",
             json=payload,
             headers={"Authorization": f"Bearer {os.getenv('AI_KEY', '')}"},
-            timeout=timeout,
+            # Ноутбук выключен — понимаем это за пару секунд, а не ждём весь таймаут ответа.
+            timeout=httpx.Timeout(timeout, connect=float(os.getenv("AI_CONNECT_TIMEOUT", "2.5"))),
         )
         r.raise_for_status()
         return r.json()

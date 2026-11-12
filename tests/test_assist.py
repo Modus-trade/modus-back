@@ -90,3 +90,18 @@ def test_voice_unavailable(clients, monkeypatch):
     monkeypatch.setattr(ai, "voice", lambda a, f: None)
     r = clients[0].post("/api/assist/voice", json={"audio_base64": "A" * 200, "format": "m4a"})
     assert r.status_code == 503
+
+
+def test_participant_sees_shared_problem_read_only(clients):
+    employee, other = clients[0], clients[1]
+    r = employee.post("/api/tickets", json={"type": "PROBLEM", "category_id": 1, "title": "Общая проблема со статусами",
+                                            "description": "Статусы заявок не совпадают в системах", "is_shared": True})
+    assert r.status_code in (200, 201), r.text
+    ticket_id = r.json()["id"]
+    assert other.get(f"/api/tickets/{ticket_id}").status_code == 404
+    assert other.post(f"/api/problems/{ticket_id}/join").status_code == 200
+    detail = other.get(f"/api/tickets/{ticket_id}")
+    assert detail.status_code == 200 and detail.json()["viewer"] == "participant"
+    assert detail.json()["comments"] == []
+    assert other.post(f"/api/tickets/{ticket_id}/comments", json={"body": "и у меня"}).status_code == 404
+    assert employee.get(f"/api/tickets/{ticket_id}").json()["viewer"] == "member"

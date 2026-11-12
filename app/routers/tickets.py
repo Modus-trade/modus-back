@@ -22,6 +22,7 @@ from ..services.tickets import (
     require_manager,
     set_status,
     validate_assignee,
+    joined_ticket,
     visible,
 )
 
@@ -212,8 +213,18 @@ def create_ticket(data: TicketCreate, db: DB, user: CurrentUser):
 @router.get("/tickets/{ticket_id}")
 def detail(ticket_id: int, db: DB, user: CurrentUser):
     preload(db)
-    ticket = get_ticket(db, user, ticket_id)
+    member = db.scalar(visible(user).where(Ticket.id == ticket_id))
+    ticket = member or joined_ticket(db, user, ticket_id)
+    if not ticket:
+        raise HTTPException(404, "Обращение не найдено")
     result = serialize(db, ticket)
+    # Присоединившийся к общей проблеме видит заголовок, стадию, ответственного и результат.
+    # Описание, автор, переписка и вложения остаются приватными.
+    result["viewer"] = "member" if member else "participant"
+    if result["viewer"] == "participant":
+        result.update(description="", proposed_solution=None, author_name="", author_id=0, department="",
+                      comments=[], history=[], attachments=[], resolution_reviews=[])
+        return result
     result["comments"] = [
         {**jsonable_encoder(c), "author_name": db.get(User, c.author_id).full_name}
         for c in db.scalars(

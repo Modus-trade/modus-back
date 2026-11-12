@@ -1,7 +1,7 @@
 from fastapi import HTTPException
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
-from ..models import Ticket, TicketHistory, User, now
+from ..models import Ticket, TicketHistory, TicketParticipant, User, now
 
 TRANSITIONS = {
     "NEW": ["IN_REVIEW", "IN_PROGRESS", "AWAITING_CLARIFICATION", "REJECTED"],
@@ -28,6 +28,15 @@ def visible(user: User):
             )
         )
     return query
+
+
+def joined_ticket(db: Session, user: User, ticket_id: int) -> Ticket | None:
+    """Общая проблема, к которой сотрудник присоединился: её можно смотреть, но не менять."""
+    return db.scalar(
+        select(Ticket)
+        .join(TicketParticipant, TicketParticipant.ticket_id == Ticket.id)
+        .where(Ticket.id == ticket_id, Ticket.is_shared.is_(True), TicketParticipant.user_id == user.id)
+    )
 
 
 def get_ticket(db: Session, user: User, ticket_id: int, *, lock: bool = False) -> Ticket:

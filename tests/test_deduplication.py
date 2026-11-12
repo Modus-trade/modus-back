@@ -20,7 +20,10 @@ def test_join_unique_private_and_sorted(clients):
         r = other.post(f"/api/problems/{ticket['id']}/join")
         assert r.status_code == 200 and r.json()["affected_count"] == 2
     assert author.post(f"/api/problems/{ticket['id']}/join").json()["affected_count"] == 2
-    assert other.get(f"/api/tickets/{ticket['id']}").status_code == 404
+    # Участник видит карточку только для чтения и без приватных полей автора.
+    shared_view = other.get(f"/api/tickets/{ticket['id']}").json()
+    assert shared_view["viewer"] == "participant"
+    assert shared_view["description"] == "" and shared_view["author_name"] == "" and shared_view["comments"] == []
     assert other.post(f"/api/tickets/{ticket['id']}/comments", json={"body": "test"}).status_code == 404
     joined = other.get("/api/problems/joined").json()
     assert joined["total"] == 1 and joined["items"][0]["status"] == "NEW"

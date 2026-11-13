@@ -123,3 +123,10 @@ def test_voice_comment_with_transcript(clients, monkeypatch, tmp_path):
     assert all(a["id"] != voice["audio_id"] for a in detail["attachments"])
     assert employee.get(f"/api/attachments/{voice['audio_id']}").status_code == 200
     assert employee.post(f"/api/tickets/{ticket_id}/voice", files={"file": ("x.exe", b"x" * 2000)}).status_code == 422
+
+
+def test_solve_without_ai_has_no_fallback_articles(clients, monkeypatch):
+    monkeypatch.setattr(ai, "solve", lambda t, s: None)
+    created = ticket(clients[0], "Не печатает принтер", "Принтер на этаже не печатает документы")
+    r = clients[2].post(f"/api/tickets/{created['id']}/solve")
+    assert r.status_code == 503 and "инструкций" in r.json()["detail"]

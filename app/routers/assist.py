@@ -90,5 +90,19 @@ def solve(ticket_id: int, db: DB, user: CurrentUser):
         [],
     )
     if result:
-        return {**result, "source": "ai"}
-    raise HTTPException(503, "Сервис подсказок временно недоступен. Попробуйте позже.")
+        return {**result, "source": "ai", "articles": []}
+    # Без ИИ: подходящие проверенные инструкции из «Инструкций и ответов».
+    from .knowledge import SuggestQuery as KnowledgeQuery, suggest as knowledge_suggest
+    found = knowledge_suggest(
+        KnowledgeQuery(text=f"{ticket.title}\n{ticket.description}"[:20500], category_id=ticket.category_id), db, user,
+    )["items"]
+    if not found:
+        raise HTTPException(503, "ИИ сейчас недоступен, а подходящих инструкций пока нет")
+    return {
+        "summary": "ИИ сейчас недоступен. Вот проверенные инструкции по похожим вопросам:",
+        "steps": [f"{a['title']} — {a['summary']}" for a in found],
+        "based_on": [],
+        "reply_draft": "",
+        "source": "knowledge",
+        "articles": [{"id": a["id"], "title": a["title"]} for a in found],
+    }

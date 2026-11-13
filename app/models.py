@@ -35,6 +35,7 @@ class Category(Base):
 
 
 class Ticket(Base):
+    onec_item: Mapped[str | None] = mapped_column(Text, nullable=True)
     __tablename__ = "tickets"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     number: Mapped[str] = mapped_column(String(30), unique=True)

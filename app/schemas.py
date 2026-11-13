@@ -72,6 +72,7 @@ class CategoryPatch(BaseModel):
 
 
 class TicketCreate(BaseModel):
+    onec_item_ref: UUID | None = None
     self_service_attempt_id: UUID | None = None
     is_shared: bool = False
     type: TicketType

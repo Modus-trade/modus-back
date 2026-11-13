@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from .routers import admin, analytics, assist, auth, tickets, problems, notifications, knowledge, knowledge_editor
 from .services.deadlines import deadline_notification_loop
 from .services.integrations import integration_loop
-from .routers import integrations, bitrix_bot
+from .routers import integrations, bitrix_bot, onec
 
 @asynccontextmanager
 async def lifespan(app):
@@ -43,7 +43,7 @@ async def protect_origin(request: Request, call_next):
     return response
 
 
-for router in (bitrix_bot.router, integrations.router, auth.router, tickets.router, admin.router, analytics.router, problems.router, notifications.router, notifications.live, assist.router, knowledge_editor.router, knowledge.router):
+for router in (onec.router, bitrix_bot.router, integrations.router, auth.router, tickets.router, admin.router, analytics.router, problems.router, notifications.router, notifications.live, assist.router, knowledge_editor.router, knowledge.router):
     app.include_router(router)
 
 

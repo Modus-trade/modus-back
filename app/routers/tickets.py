@@ -60,6 +60,8 @@ def preload(db):
 
 def serialize(db, ticket):
     data = jsonable_encoder(ticket)
+    import json
+    data["onec_item"] = json.loads(ticket.onec_item) if ticket.onec_item else None
     author, assignee, category = (
         db.get(User, ticket.author_id),
         db.get(User, ticket.assignee_id) if ticket.assignee_id else None,
@@ -206,8 +208,14 @@ def create_ticket(data: TicketCreate, db: DB, user: CurrentUser):
             return serialize(db, get_ticket(db, user, attempt.ticket_id))
         if attempt.joined_problem_id is not None:
             raise HTTPException(409, "Вы уже присоединились к общей проблеме. Откройте новую форму.")
+    from ..services.onec import find_item
+    import json
+    item = find_item(data.onec_item_ref) if data.onec_item_ref else None
+    if data.onec_item_ref and not item:
+        raise HTTPException(422, "Позиция 1С не найдена")
     ticket = Ticket(
-        **data.model_dump(exclude={"self_service_attempt_id"}),
+        onec_item=json.dumps({**item, "mode": "mock"}, ensure_ascii=False) if item else None,
+        **data.model_dump(exclude={"self_service_attempt_id", "onec_item_ref"}),
         id=ticket_id,
         number=f"A-{ticket_id:03d}",
         author_id=user.id,

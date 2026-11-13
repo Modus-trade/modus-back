@@ -81,3 +81,10 @@ def summary(db: DB, user: CurrentUser):
             key=lambda item: (-item["affected_count"], item["number"]),
         )[:5],
     }
+
+
+@router.get('/impact')
+def impact(db: DB, user: CurrentUser, days: Literal[30, 60, 90] = 30):
+    require_manager(user)
+    from ..services.impact import report
+    return report(db, user, days)

@@ -35,6 +35,7 @@ class Category(Base):
 
 
 class Ticket(Base):
+    onec_document: Mapped[str | None] = mapped_column(Text, nullable=True)
     onec_item: Mapped[str | None] = mapped_column(Text, nullable=True)
     __tablename__ = "tickets"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -229,3 +230,5 @@ class KnowledgeReport(Base):
     is_open: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     __table_args__ = (UniqueConstraint("article_id", "version", "reporter_id", name="uq_knowledge_report"),)
+
+from .onec_models import OneCSettings, OneCRecord, OneCExchange  # noqa: E402,F401

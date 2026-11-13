@@ -62,6 +62,7 @@ def serialize(db, ticket):
     data = jsonable_encoder(ticket)
     import json
     data["onec_item"] = json.loads(ticket.onec_item) if ticket.onec_item else None
+    data["onec_document"] = json.loads(ticket.onec_document) if ticket.onec_document else None
     author, assignee, category = (
         db.get(User, ticket.author_id),
         db.get(User, ticket.assignee_id) if ticket.assignee_id else None,
@@ -208,14 +209,24 @@ def create_ticket(data: TicketCreate, db: DB, user: CurrentUser):
             return serialize(db, get_ticket(db, user, attempt.ticket_id))
         if attempt.joined_problem_id is not None:
             raise HTTPException(409, "Вы уже присоединились к общей проблеме. Откройте новую форму.")
-    from ..services.onec import find_item
+    from ..services import onec
+    from ..services.onec_client import OneCError
     import json
-    item = find_item(data.onec_item_ref) if data.onec_item_ref else None
-    if data.onec_item_ref and not item:
-        raise HTTPException(422, "Позиция 1С не найдена")
+    try:
+        item = onec.snapshot(db,'items',data.onec_item_ref,data.onec_scope) if data.onec_item_ref else None
+        document = None
+        if data.onec_document_ref:
+            if data.is_shared:
+                raise HTTPException(422, "Обращение с документом 1С должно быть приватным")
+            if not onec.allow_documents(user,onec.settings(db).mode):
+                raise HTTPException(403, "Нет доступа к документам 1С")
+            document=onec.snapshot(db,data.onec_document_kind,data.onec_document_ref,data.onec_scope)
+    except OneCError as e:
+        raise HTTPException(422,str(e))
     ticket = Ticket(
-        onec_item=json.dumps({**item, "mode": "mock"}, ensure_ascii=False) if item else None,
-        **data.model_dump(exclude={"self_service_attempt_id", "onec_item_ref"}),
+        onec_item=json.dumps(item,ensure_ascii=False) if item else None,
+        onec_document=json.dumps(document,ensure_ascii=False) if document else None,
+        **data.model_dump(exclude={"self_service_attempt_id", "onec_item_ref", "onec_document_ref", "onec_document_kind", "onec_scope"}),
         id=ticket_id,
         number=f"A-{ticket_id:03d}",
         author_id=user.id,
@@ -296,6 +307,8 @@ def patch_ticket(ticket_id: int, data: TicketPatch, db: DB, user: CurrentUser):
         raise HTTPException(409, "Обращение изменилось. Обновите карточку перед сохранением.")
     if ticket.status == "CLOSED" and values:
         raise HTTPException(422, "Закрытое обращение нельзя изменять")
+    if values.get("is_shared") and ticket.onec_document:
+        raise HTTPException(422, "Обращение с документом 1С нельзя сделать общим")
     if "is_shared" in values:
         if values["is_shared"] is None or (values["is_shared"] and ticket.type != "PROBLEM"):
             raise HTTPException(422, "Общей может быть только проблема")

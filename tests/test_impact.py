@@ -23,4 +23,8 @@ def test_impact_permissions_counts_and_missing_samples(clients):
     assert len(data['weeks'])==12
     assert data['comparison_ready'] is False
     assert outside.get('/api/analytics/impact').json()['current']['created']==0
+    for days in (30, 60, 90):
+        response = admin.get('/api/analytics/impact', params={'days': days})
+        assert response.status_code == 200, response.text
+        assert response.json()['current']['confirmed'] == 1
     assert admin.get('/api/analytics/impact?days=7').status_code==422

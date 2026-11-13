@@ -84,7 +84,7 @@ def summary(db: DB, user: CurrentUser):
 
 
 @router.get('/impact')
-def impact(db: DB, user: CurrentUser, days: Literal[30, 60, 90] = 30):
+def impact(db: DB, user: CurrentUser, days: Literal["30", "60", "90"] = "30"):
     require_manager(user)
     from ..services.impact import report
-    return report(db, user, days)
+    return report(db, user, int(days))
